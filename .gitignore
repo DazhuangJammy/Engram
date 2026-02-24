@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Test cache
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Local config
+.mcp.json
+.claude/
+DEVELOPMENT_PLAN.md
+TODO.md
+
+# OS
+.DS_Store
