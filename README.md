@@ -1,15 +1,36 @@
 # Engram MCP Server
 
-RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这个问题。
+中文 | [English](./README_en.md)
+
+> Engram（记忆印迹）——神经科学中，大脑存储特定记忆的神经元集合。
+
+## 我的想法💡
+
+将人或智能体的"记忆"作为一种可共享、可加载的资源，在不同智能体之间流通，最终实现能力的叠加与融合。
+
+这里的"记忆"不是简单的数据交换，而是一套完整的、有因果链的经验体系：
+
+- 一个人的性格特质与思维方式
+- 成长经历与人生轨迹
+- 驱动他选择某个专业、成为某个领域专家的动因
+- 在该领域积累的专业知识与判断力
+
+将这套记忆封装后共享出来，其他人的智能体可以加载它。当大量不同背景、不同专长的记忆被汇聚并加载到同一个智能体上时，这个智能体就具备了跨领域的认知深度，成为一个"超级智能体"。
+
+**简单说：每个人贡献自己的"人生存档"，智能体加载得越多，就越强。**
+
+---
 
 给 AI 注入可切换的专家记忆——不只是知识检索，而是**"谁 + 知道什么 + 怎么思考"**的完整人设。一套 Markdown 文件就能让任何 AI 获得专家级记忆，零向量依赖，即插即用。
 
+你还能把这些记忆加载到 N 个 subagent 里面让多个智能体干活
+
 ```
-Engram  = 专家是谁 + 知道什么 + 怎么思考
-Tools   = 具体能做什么操作
+Engram      = 专家是谁 + 知道什么 + 怎么思考
+Skills/Tools = 具体能做什么操作
 ```
 
-人工策展 + 模型自主检索，在小规模高质量知识场景下比 RAG 更精准——不是因为技术更强，而是因为人工策展的质量天然高于自动切分。把 memory 分享给别人，对方的 AI 立刻成为同一个专家。未来大家共享的不是 Skills，而是 Memory。
+RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这个问题。人工策展 + 模型自主检索，在小规模高质量知识场景下比 RAG 更精准——不是因为技术更强，而是因为人工策展的质量天然高于自动切分。把 memory 分享给别人，对方的 AI 立刻成为同一个专家。未来大家共享的不是 Skills，而是 Memory。
 
 支持所有 MCP 兼容客户端：Claude Desktop / Claude Code、Cursor、Windsurf、Codex 等。
 
@@ -52,59 +73,114 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 
 ## 安装
 
-推荐使用 [uv](https://docs.astral.sh/uv/)（自动管理 Python 版本和依赖）：
+### 快捷方式：让 AI 帮你装
+
+如果你不想手动安装，直接把下面这段话发给你的 Claude Code / Codex / OpenClaw：
+
+```text
+帮我安装并配置这个 MCP 项目 https://github.com/DazhuangJammy/Engram.git
+配置项目之后记得把项目里的 examples 加载到我的 engram 里面
+最后告诉我这个项目要怎么用
+```
+
+AI 会自动帮你完成克隆、配置、加载示例的全部流程。
+
+---
+
+### 手动安装
+
+#### 1. 安装 Homebrew（如果还没有）
+
+macOS / Linux：
 
 ```bash
-# 安装 uv（如果还没有）
-# macOS / Linux
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+> 安装完成后按终端提示将 Homebrew 加入 PATH。详见 [brew.sh](https://brew.sh/)。
+
+### 2. 安装 uv
+
+[uv](https://docs.astral.sh/uv/) 是一个极快的 Python 包管理器，会自动管理 Python 版本和依赖：
+
+```bash
 brew install uv
-# 或
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 克隆项目
-git clone <repo-url> engram-mcp-server
-cd engram-mcp-server
-
-# 安装（uv 会自动下载合适的 Python 版本）
-uv pip install -e .
 ```
 
 <details>
-<summary>其他安装方式</summary>
-
-**pip 安装（需要 Python >= 3.10）：**
+<summary>其他安装 uv 的方式</summary>
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 </details>
 
+### 3. 克隆项目
+
+建议放到一个固定位置（后续配置需要用到这个路径）：
+
+```bash
+# 推荐放到用户目录下
+git clone https://github.com/DazhuangJammy/Engram.git ~/engram-mcp-server
+
+# 或者放到你喜欢的任意位置
+git clone https://github.com/DazhuangJammy/Engram.git /your/preferred/path/engram-mcp-server
+```
+
+克隆完成后不需要执行 `pip install`，后续通过 `uv run --directory` 直接运行，uv 会自动处理所有依赖。
+
 ## 快速开始
 
-1. 安装（见上方）
+### 1. 配置 MCP Server
 
-2. 在项目根目录创建 `.mcp.json`（以 Claude Code 为例）：
-   ```json
-   {
-     "mcpServers": {
-       "engram-server": {
-         "command": "uv",
-         "args": [
-           "run",
-           "--directory", "/path/to/engram-mcp-server",
-           "engram-server",
-           "--packs-dir", "~/.engram"
-         ]
-       }
-     }
-   }
-   ```
-   > 将 `/path/to/engram-mcp-server` 替换为你的实际项目路径。
+在你的项目根目录创建 `.mcp.json`（以 Claude Code 为例）：
 
-3. 放置 Engram 包到 `~/.engram/<name>/`，重启 Claude Code 即可使用。
+```json
+{
+  "mcpServers": {
+    "engram-server": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "~/engram-mcp-server",
+        "engram-server",
+        "--packs-dir", "~/.engram"
+      ]
+    }
+  }
+}
+```
+
+> 将 `~/engram-mcp-server` 替换为你克隆项目的实际路径。
+
+### 2. 创建 Engram 存放目录
+
+```bash
+mkdir -p ~/.engram
+```
+
+将 Engram 包放到 `~/.engram/<name>/` 下，或者用项目自带的示例试试：
+
+```bash
+cp -r ~/engram-mcp-server/examples/fitness-coach ~/.engram/fitness-coach
+```
+
+### 3. 添加 System Prompt（推荐）
+
+在项目的 `CLAUDE.md`（Claude Code）或 `AGENTS.md`（Codex）文件开头加入以下提示词，让 AI 自动发现和使用 Engram：
+
+```text
+你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
+当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
+用户也可以用 @专家名 直接指定使用哪个专家。
+```
+
+### 4. 重启 AI 客户端，开始使用
 
 ## CLI 用法
 
@@ -389,17 +465,17 @@ uses:
 }
 ```
 
-## 启用自动加载（三种方式）
+## 启用自动加载
 
-### 方式 A：MCP Prompt（推荐）
+### 方式 A：手动添加 System Prompt（推荐）
 
-服务暴露 `engram-system-prompt`，支持 MCP Prompt 的客户端可自动注入。
+将以下提示词添加到对应 AI 工具的指令文件开头：
 
-### 方式 B：工具描述引导（零配置）
-
-`list_engrams` / `load_engram` / `read_engram_file` 的描述已包含调用流程。
-
-### 方式 C：手动添加 System Prompt
+| AI 工具 | 指令文件 |
+|---------|---------|
+| Claude Code | 项目根目录的 `CLAUDE.md` |
+| Codex | 项目根目录的 `AGENTS.md` |
+| 其他 | 对应工具的 system prompt 配置 |
 
 ```text
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
@@ -407,6 +483,14 @@ uses:
 查看知识索引中的摘要，需要细节时调用 read_engram_file(name, path) 读取完整知识或案例。
 用户也可以用 @专家名 直接指定使用哪个专家。
 ```
+
+### 方式 B：MCP Prompt
+
+服务暴露 `engram-system-prompt`，支持 MCP Prompt 的客户端可自动注入。
+
+### 方式 C：工具描述引导（零配置）
+
+`list_engrams` / `load_engram` / `read_engram_file` 的工具描述已包含调用流程引导，部分 AI 客户端无需额外配置即可自动触发。
 
 ## 测试
 
