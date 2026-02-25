@@ -17,3 +17,15 @@
 
 4) 只给原则不给执行细节 -> 常见低效。
 必须明确每周频率、组次、强度和何时进阶，否则难以坚持与复盘。
+
+# 记忆规则
+- 用户提到身体状况、伤病或疼痛时 → capture_memory(category="health", memory_type="fact", tags=["injury"])
+  示例：膝盖旧伤、肩袖问题、腰椎间盘突出
+- 用户说出具体训练目标时 → capture_memory(category="goals", memory_type="fact")
+  示例：3个月减10斤、备战马拉松、增肌5kg
+- 用户透露时间或频率约束时 → capture_memory(category="schedule", memory_type="fact")
+  示例：每周只能练3次、只有早上有时间、出差频繁
+- 用户对训练计划给出反馈时 → capture_memory(category="feedback", memory_type="preference")
+  示例：上次的计划太累、喜欢居家训练、不喜欢跑步
+- 用户做出关键训练决定时 → capture_memory(category="decisions", memory_type="decision")
+  示例：决定从全身训练开始、选择了3天分化方案

@@ -9,3 +9,13 @@
 - 用户服务和订单服务之间有最终一致性延迟，别用同步调用
 - Redis 缓存的 key 命名必须带版本号，否则发版时会读到脏数据
 - 不要直接查主库，读请求走从库，写请求才走主库
+
+## 记忆规则
+- 新成员的角色和所属团队时 → capture_memory(category="team-members", memory_type="fact")
+  示例：小王是前端新人、来自推荐系统组
+- 成员遇到的具体问题时 → capture_memory(category="issues-encountered", memory_type="history")
+  示例：被Redis缓存问题卡住、不理解订单服务的设计
+- 成员已了解的模块或进度时 → capture_memory(category="onboarding-progress", memory_type="history")
+  示例：已经看完了用户服务文档、跑通了本地环境
+- 成员的技术背景时 → capture_memory(category="member-profile", memory_type="fact")
+  示例：有3年React经验、没接触过微服务

@@ -464,10 +464,34 @@ my-engram/
 
 - `role.md`：背景经历、沟通风格、核心信念
 - `workflow.md`：决策流程
-- `rules.md`：运作规则、常见错误
+- `rules.md`：运作规则、常见错误、**记忆规则**（见下方）
 - `knowledge/_index.md` + 主题文件：知识索引（含内联摘要）+ 细节
 - `examples/_index.md` + 案例文件：案例索引（含 uses 关联）+ 复盘
 - `memory/`：动态记忆目录（对话中自动生成，无需手动创建）
+
+### 在 rules.md 中定义记忆规则（推荐）
+
+`capture_memory` 依赖 AI 的主动判断，但 AI 不知道"这个 Engram 应该记什么"。在 `rules.md` 末尾加一节 `## 记忆规则`，明确告诉 AI 何时捕获、用什么 category 和 memory_type，可以大幅提升记忆的覆盖率和准确性。
+
+```markdown
+## 记忆规则
+- 用户提到身体状况、伤病或疼痛时 → capture_memory(category="health", memory_type="fact", tags=["injury"])
+  示例：膝盖旧伤、肩袖问题、腰椎间盘突出
+- 用户说出具体训练目标时 → capture_memory(category="goals", memory_type="fact")
+  示例：3个月减10斤、备战马拉松、增肌5kg
+- 用户对训练计划给出反馈时 → capture_memory(category="feedback", memory_type="preference")
+  示例：上次的计划太累、喜欢居家训练、不喜欢跑步
+- 用户做出关键训练决定时 → capture_memory(category="decisions", memory_type="decision")
+  示例：决定从全身训练开始、选择了3天分化方案
+```
+
+**设计原则：**
+- 每条规则对应一个明确的触发场景，不要写"发现重要信息时"这种模糊描述
+- category 命名保持一致，同一类信息始终写入同一个文件
+- 用 memory_type 区分信息性质：`fact`（客观事实）/ `preference`（偏好）/ `decision`（决定）/ `history`（历史节点）
+- tags 用于同一 category 内的细分过滤，如 `["injury", "knee"]`
+
+所有内置示例（`examples/` 目录）均已包含针对各自领域的记忆规则，可直接参考。
 
 ### 案例→知识关联（uses frontmatter）
 
