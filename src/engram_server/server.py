@@ -184,6 +184,9 @@ def _build_engram_system_prompt(engrams: list[dict]) -> str:
         "   判断需要深入哪些主题\n"
         "4. 需要细节时，调用 read_engram_file(name, path) 读取完整知识或案例\n"
         "5. 加载后以该专家的人格回答：保持其沟通风格、判断倾向和价值观\n"
+        "6. 对话中发现用户的重要偏好、个人情况或关键决定时，\n"
+        "   调用 capture_memory(name, content, category, summary) 记录下来\n"
+        "7. 下次加载同一专家时，动态记忆会自动带入，无需用户重复说明\n"
     )
 
 
@@ -267,6 +270,50 @@ is blocked."""
         """Install an Engram pack from git URL."""
         result = install_engram_from_source(source=source, packs_dir=packs_dir)
         return str(result["message"])
+
+    @app.tool()
+    def write_engram_file(
+        name: str, path: str, content: str, mode: str = "overwrite"
+    ) -> str:
+        """Write or append content to a file inside an Engram pack.
+
+Use this to create or update role.md, workflow.md, rules.md,
+knowledge/*.md, examples/*.md, or any other file.
+Set mode to "append" to add content to an existing file.
+Path traversal outside the Engram directory is blocked."""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        append = mode == "append"
+        ok = loader.write_file(name, path, content, append=append)
+        if not ok:
+            return f"写入失败: {path}"
+        action = "追加" if append else "写入"
+        return f"已{action}: {path}"
+
+    @app.tool()
+    def capture_memory(
+        name: str, content: str, category: str, summary: str
+    ) -> str:
+        """Capture a memory entry during conversation.
+
+Call this when you identify information worth remembering about the user,
+such as preferences, personal context, past decisions, or feedback.
+The memory is stored in memory/{category}.md and indexed automatically.
+It will be loaded in future conversations with this Engram.
+
+Args:
+    name: Engram pack name
+    content: The memory content to store
+    category: Topic category (e.g. "user-profile", "preferences", "history")
+    summary: One-line summary for the memory index"""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        ok = loader.capture_memory(name, content, category, summary)
+        if not ok:
+            return f"记忆捕获失败: {category}"
+        return f"已记录: [{category}] {summary}"
 
     return app
 

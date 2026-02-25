@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -97,10 +98,72 @@ class EngramLoader:
         if examples_index and examples_index.strip():
             sections.append(f"## 案例索引\n{examples_index.strip()}")
 
+        memory_index = self.load_file(name, "memory/_index.md")
+        if memory_index and memory_index.strip():
+            sections.append(f"## 动态记忆\n{memory_index.strip()}")
+
         if not sections:
             return ""
 
         return "\n\n".join(sections)
+
+    def write_file(
+        self, name: str, relative_path: str, content: str, *, append: bool = False
+    ) -> bool:
+        """Write or append content to a file inside an Engram pack.
+
+        Creates parent directories as needed. Returns True on success.
+        """
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return False
+
+        target = (engram_dir / relative_path).resolve()
+        try:
+            target.relative_to(engram_dir)
+        except ValueError:
+            return False
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if append:
+                with target.open("a", encoding="utf-8") as f:
+                    f.write(content)
+            else:
+                target.write_text(content, encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def capture_memory(
+        self, name: str, content: str, category: str, summary: str
+    ) -> bool:
+        """Capture a memory entry and update the memory index."""
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return False
+
+        memory_dir = engram_dir / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        entry = f"\n---\n[{ts}]\n{content.strip()}\n"
+        category_file = memory_dir / f"{category}.md"
+        try:
+            with category_file.open("a", encoding="utf-8") as f:
+                f.write(entry)
+        except OSError:
+            return False
+
+        index_line = f"- `memory/{category}.md` [{ts}] {summary.strip()}\n"
+        index_file = memory_dir / "_index.md"
+        try:
+            with index_file.open("a", encoding="utf-8") as f:
+                f.write(index_line)
+        except OSError:
+            return False
+
+        return True
 
     def _render_section(self, name: str, title: str, subdir: str) -> str:
         filename = _BASE_SECTIONS.get(subdir, f"{subdir}.md")

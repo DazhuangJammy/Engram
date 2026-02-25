@@ -97,3 +97,76 @@ def test_missing_meta_directory_is_skipped(tmp_path: Path) -> None:
 
     assert len(items) == 1
     assert items[0]["name"] == "has-meta"
+
+
+def _make_engram(tmp_path: Path, name: str = "test-expert") -> EngramLoader:
+    """Helper to create a minimal engram for write/memory tests."""
+    engram_dir = tmp_path / name
+    engram_dir.mkdir()
+    (engram_dir / "meta.json").write_text(
+        f'{{"name": "{name}", "description": "test"}}', encoding="utf-8"
+    )
+    (engram_dir / "role.md").write_text("# test role", encoding="utf-8")
+    return EngramLoader(tmp_path)
+
+
+def test_write_file_creates_and_overwrites(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    assert loader.write_file("test-expert", "knowledge/topic.md", "v1")
+    assert (tmp_path / "test-expert" / "knowledge" / "topic.md").read_text() == "v1"
+
+    assert loader.write_file("test-expert", "knowledge/topic.md", "v2")
+    assert (tmp_path / "test-expert" / "knowledge" / "topic.md").read_text() == "v2"
+
+
+def test_write_file_append_mode(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    loader.write_file("test-expert", "notes.md", "line1\n")
+    loader.write_file("test-expert", "notes.md", "line2\n", append=True)
+
+    content = (tmp_path / "test-expert" / "notes.md").read_text()
+    assert "line1" in content
+    assert "line2" in content
+
+
+def test_write_file_blocks_path_traversal(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    assert loader.write_file("test-expert", "../escape.md", "bad") is False
+
+
+def test_capture_memory_creates_entry_and_index(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    ok = loader.capture_memory(
+        "test-expert", "用户膝盖有旧伤", "user-profile", "膝关节活动度受限"
+    )
+    assert ok is True
+
+    memory_dir = tmp_path / "test-expert" / "memory"
+    assert memory_dir.is_dir()
+
+    category_file = memory_dir / "user-profile.md"
+    assert category_file.is_file()
+    assert "用户膝盖有旧伤" in category_file.read_text()
+
+    index_file = memory_dir / "_index.md"
+    assert index_file.is_file()
+    index_content = index_file.read_text()
+    assert "膝关节活动度受限" in index_content
+    assert "memory/user-profile.md" in index_content
+
+
+def test_load_engram_base_includes_memory(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    loader.capture_memory(
+        "test-expert", "喜欢早上训练", "preferences", "偏好晨练"
+    )
+
+    base = loader.load_engram_base("test-expert")
+    assert base is not None
+    assert "## 动态记忆" in base
+    assert "偏好晨练" in base

@@ -35,10 +35,11 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 ## Features
 
 - Zero vector dependencies: no chromadb / litellm, only depends on `mcp`
-- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `install_engram`
+- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `install_engram`
 - Index-driven loading:
-  - `load_engram` returns role/workflow/rules + knowledge index (with inline summaries) + examples index (with uses)
+  - `load_engram` returns role/workflow/rules + knowledge index (with inline summaries) + examples index (with uses) + dynamic memory index
   - `read_engram_file` reads full knowledge or example files on demand
+- Dynamic memory: automatically captures user preferences and key information during conversation, loaded on next session
 - CLI commands: `serve` / `list` / `install` / `init`
 
 ## Design Philosophy: Index-Driven Layered Lazy Loading
@@ -61,10 +62,14 @@ Layer 1: Always loaded (returned by load_engram in one call)
   ├── workflow.md          Full text  ← Decision workflow (step-by-step process)
   ├── rules.md             Full text  ← Operating rules + common mistakes
   ├── knowledge/_index.md  ← Knowledge index (file list + one-line descriptions + inline summaries)
-  └── examples/_index.md   ← Examples index (file list + one-line descriptions + uses references)
+  ├── examples/_index.md   ← Examples index (file list + one-line descriptions + uses references)
+  └── memory/_index.md     ← Dynamic memory index (auto-captured user preferences and key info)
 
 Layer 2: Loaded on demand (LLM reads index summaries, then proactively calls)
-  └── read_engram_file(name, path)  ← Read any knowledge or example file
+  └── read_engram_file(name, path)  ← Read any knowledge, example, or memory file
+
+Layer 3: Written during conversation (LLM captures important info proactively)
+  └── capture_memory(name, content, category, summary)  ← Capture user preferences, key decisions, etc.
 ```
 
 The skeleton stays loaded at all times. Knowledge is controlled via "index with inline summaries + full text on demand." No matter how large an Engram gets, the injected content per turn stays manageable.
@@ -221,6 +226,8 @@ engram-server init my-expert --packs-dir ~/.engram
 | `get_engram_info` | `name` | Get full `meta.json` |
 | `load_engram` | `name`, `query` | Load role/workflow/rules full text + knowledge index (with inline summaries) + examples index (with uses) |
 | `read_engram_file` | `name`, `path` | Read a single file on demand (with path traversal protection) |
+| `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
+| `capture_memory` | `name`, `content`, `category`, `summary` | Capture user preferences and key info during conversation, auto-stored in memory/ |
 | `install_engram` | `source` | Install Engram pack from git URL |
 
 ### `load_engram` Response Format
@@ -245,6 +252,9 @@ engram-server init my-expert --packs-dir ~/.engram
 
 ## Examples Index
 {examples/_index.md content, with uses references}
+
+## Dynamic Memory
+{memory/_index.md content, with auto-captured user preferences and key info}
 ```
 
 ## How Agents Use Engram
@@ -287,6 +297,9 @@ User: "@fitness-coach help me create a muscle-building plan"
   examples/           # optional
     _index.md
     <case>.md
+  memory/             # dynamic memory (auto-generated, captured during conversation)
+    _index.md
+    <category>.md
 ```
 
 `meta.json` example:
@@ -349,6 +362,7 @@ Recommended full structure:
 - `rules.md`: Operating rules, common mistakes
 - `knowledge/_index.md` + topic files: Knowledge index (with inline summaries) + details
 - `examples/_index.md` + case files: Examples index (with uses references) + case studies
+- `memory/`: Dynamic memory directory (auto-generated during conversation, no manual setup needed)
 
 ### Example-to-Knowledge Links (uses frontmatter)
 
@@ -464,6 +478,7 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
 When a user's question matches an expert, call load_engram(name, query) to load its base layer and indexes.
 Check the knowledge index summaries; when you need details, call read_engram_file(name, path) to read full knowledge or examples.
+When you identify important user preferences or key information during conversation, call capture_memory(name, content, category, summary) to save it.
 Users can also specify an expert directly with @expert-name.
 ```
 
@@ -491,6 +506,13 @@ pytest -q
 - Template system: `engram-server init` creates standard structure
 - Test coverage: loader / server / install
 - 11 complete example Engrams
+
+### Completed (v0.2.0)
+
+- Dynamic memory: `capture_memory` auto-captures user preferences and key info during conversation
+- Write capability: `write_engram_file` enables auto-packaging Engrams from conversations
+- `load_engram` automatically loads `memory/_index.md`, no need for users to repeat themselves
+- All example Engrams now include memory/ samples
 
 ### Planned
 

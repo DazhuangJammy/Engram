@@ -169,3 +169,71 @@ async def test_multi_engram_switching() -> None:
     assert "knowledge/合同违约责任.md" in contract
     assert "examples/" not in contract
     assert fitness != contract
+
+
+@pytest.mark.asyncio
+async def test_write_engram_file_and_read_back(tmp_path: Path) -> None:
+    """write_engram_file creates a file that can be read back."""
+    _setup_tmp_engram(tmp_path, "test-expert")
+    session = await _open_session(tmp_path)
+    try:
+        write_result = _result_text(
+            await session.call_tool(
+                "write_engram_file",
+                {"name": "test-expert", "path": "knowledge/topic.md", "content": "# Topic\nsome content"},
+            )
+        )
+        read_result = _result_text(
+            await session.call_tool(
+                "read_engram_file",
+                {"name": "test-expert", "path": "knowledge/topic.md"},
+            )
+        )
+    finally:
+        await _close_session(session)
+
+    assert "已写入" in write_result
+    assert "some content" in read_result
+
+
+@pytest.mark.asyncio
+async def test_capture_memory_and_load(tmp_path: Path) -> None:
+    """capture_memory stores data that appears in load_engram."""
+    _setup_tmp_engram(tmp_path, "test-expert")
+    session = await _open_session(tmp_path)
+    try:
+        cap_result = _result_text(
+            await session.call_tool(
+                "capture_memory",
+                {
+                    "name": "test-expert",
+                    "content": "用户偏好晨练",
+                    "category": "preferences",
+                    "summary": "喜欢早上训练",
+                },
+            )
+        )
+        loaded = _result_text(
+            await session.call_tool(
+                "load_engram",
+                {"name": "test-expert", "query": "训练偏好"},
+            )
+        )
+    finally:
+        await _close_session(session)
+
+    assert "已记录" in cap_result
+    assert "喜欢早上训练" in cap_result
+    assert "## 动态记忆" in loaded
+    assert "喜欢早上训练" in loaded
+
+
+def _setup_tmp_engram(tmp_path: Path, name: str) -> None:
+    """Create a minimal engram in tmp_path for MCP tests."""
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(
+        json.dumps({"name": name, "description": "test engram"}),
+        encoding="utf-8",
+    )
+    (d / "role.md").write_text("# Test Role\nA test expert.", encoding="utf-8")

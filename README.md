@@ -37,10 +37,11 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 ## 功能特性
 
 - 零向量依赖：不使用 chromadb / litellm，只依赖 `mcp`
-- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`install_engram`
+- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`install_engram`
 - 索引驱动加载：
-  - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）
+  - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引
   - `read_engram_file` 按路径按需读取知识或案例全文
+- 动态记忆：对话中自动捕获用户偏好和关键信息，下次加载时自动带入
 - CLI 命令：`serve` / `list` / `install` / `init`
 
 ## 设计理念：索引驱动的分层懒加载
@@ -63,10 +64,14 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
   ├── workflow.md          全文  ← 工作流程（决策步骤）
   ├── rules.md             全文  ← 运作规则 + 常见错误
   ├── knowledge/_index.md  ← 知识索引（文件列表 + 一句话描述 + 内联摘要）
-  └── examples/_index.md   ← 案例索引（文件列表 + 一句话描述 + uses 关联）
+  ├── examples/_index.md   ← 案例索引（文件列表 + 一句话描述 + uses 关联）
+  └── memory/_index.md     ← 动态记忆索引（自动捕获的用户偏好和关键信息）
 
 第二层：按需加载（LLM 根据索引摘要判断后主动调用）
-  └── read_engram_file(name, path)  ← 读取任意知识或案例文件
+  └── read_engram_file(name, path)  ← 读取任意知识、案例或记忆文件
+
+第三层：对话中写入（LLM 识别到重要信息时主动调用）
+  └── capture_memory(name, content, category, summary)  ← 捕获用户偏好、关键决定等
 ```
 
 骨架常驻不丢，知识通过"索引内联摘要 + 全文按需"控制 token 消耗。不管 Engram 有多大，每次注入的内容都是可控的。
@@ -223,6 +228,8 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `get_engram_info` | `name` | 获取完整 `meta.json` |
 | `load_engram` | `name`, `query` | 加载角色/工作流程/规则全文 + 知识索引（含内联摘要）+ 案例索引（含 uses） |
 | `read_engram_file` | `name`, `path` | 按需读取单个文件（含路径越界保护） |
+| `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
+| `capture_memory` | `name`, `content`, `category`, `summary` | 对话中捕获用户偏好和关键信息，自动写入 memory/ |
 | `install_engram` | `source` | 从 git URL 安装 Engram 包 |
 
 ### `load_engram` 返回内容格式
@@ -247,6 +254,9 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 
 ## 案例索引
 {examples/_index.md 内容，含 uses 关联}
+
+## 动态记忆
+{memory/_index.md 内容，含自动捕获的用户偏好和关键信息}
 ```
 
 ## 工作流程：Agent 如何使用 Engram
@@ -289,6 +299,9 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
   examples/           # 可选
     _index.md
     <case>.md
+  memory/             # 动态记忆（自动生成，对话中捕获）
+    _index.md
+    <category>.md
 ```
 
 `meta.json` 示例：
@@ -366,6 +379,7 @@ my-engram/
 - `rules.md`：运作规则、常见错误
 - `knowledge/_index.md` + 主题文件：知识索引（含内联摘要）+ 细节
 - `examples/_index.md` + 案例文件：案例索引（含 uses 关联）+ 复盘
+- `memory/`：动态记忆目录（对话中自动生成，无需手动创建）
 
 ### 案例→知识关联（uses frontmatter）
 
@@ -481,6 +495,7 @@ uses:
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
 当用户的问题匹配某个专家时，调用 load_engram(name, query) 加载常驻层和索引。
 查看知识索引中的摘要，需要细节时调用 read_engram_file(name, path) 读取完整知识或案例。
+对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
 用户也可以用 @专家名 直接指定使用哪个专家。
 ```
 
@@ -508,6 +523,13 @@ pytest -q
 - 模板系统：`engram-server init` 创建标准结构
 - 测试覆盖：loader / server / install
 - 11 个完整示例 Engram
+
+### 已完成（v0.2.0）
+
+- 动态记忆：`capture_memory` 对话中自动捕获用户偏好和关键信息
+- 写入能力：`write_engram_file` 支持从对话自动打包 Engram
+- `load_engram` 自动加载 `memory/_index.md`，无需用户重复说明
+- 所有示例 Engram 新增 memory/ 样板
 
 ### 计划中
 
