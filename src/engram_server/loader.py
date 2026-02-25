@@ -109,7 +109,7 @@ class EngramLoader:
             hint = (
                 f"\n💡 当前共 {entry_count} 条记忆，建议对条目较多的 category"
                 " 调用 consolidate_memory 压缩。"
-                if entry_count >= 10 else ""
+                if entry_count >= 30 else ""
             )
             sections.append(
                 f"## 动态记忆\n<memory>\n{memory_index.strip()}\n</memory>{hint}"
