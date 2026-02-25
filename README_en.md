@@ -239,7 +239,7 @@ engram-server init my-expert --packs-dir ~/.engram
 | `load_engram` | `name`, `query` | Load role/workflow/rules full text + knowledge index (with inline summaries) + examples index (with uses) |
 | `read_engram_file` | `name`, `path` | Read a single file on demand (with path traversal protection) |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
-| `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | Capture user preferences and key info during conversation, auto-stored in memory/ with type labels, tags, and conversation scope |
+| `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id`, `expires`, `is_global` | Capture user preferences and key info during conversation, supports type labels, tags, TTL expiry, and global write |
 | `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | Compress raw memory entries into a dense summary, archiving originals to `{category}-archive.md` |
 | `delete_memory` | `name`, `category`, `summary` | Delete a specific memory entry by summary, removing it from both the index and category file |
 | `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | Correct an existing memory entry, updating both the index and category file |
@@ -275,7 +275,7 @@ engram-server init my-expert --packs-dir ~/.engram
 
 ### Memory Types (memory_type)
 
-`capture_memory` supports five semantic types to help AI understand and retrieve memories more accurately:
+`capture_memory` supports seven semantic types:
 
 | Type | Description | Example |
 |------|-------------|---------|
@@ -283,7 +283,60 @@ engram-server init my-expert --packs-dir ~/.engram
 | `fact` | Objective facts about the user | Left knee injury, height 175cm |
 | `decision` | Key decisions made during conversation | Decided to start with 3x/week |
 | `history` | Important conversation milestones | Passed first-round algorithm interview |
+| `stated` | Information explicitly stated by the user (high confidence) | "I have an old knee injury" |
+| `inferred` | Information inferred by LLM from behavior (low confidence) | Chose morning 3 times → inferred early-riser preference |
 | `general` | Default, unclassified | Other information |
+
+`stated` vs `inferred`: when referencing `inferred` memories, add hedging language like "possibly"; `correct_memory` can upgrade `inferred` to `stated`.
+
+`expires` accepts an ISO date string (e.g. `"2026-06-01"`). After expiry the memory is hidden from load results but the raw file is not deleted. Suited for time-bound states ("user is studying for an exam").
+
+`is_global=True` writes the memory to `~/.engram/_global/memory/`, automatically appended to every Engram on load. Suited for cross-expert user basics (age, city, occupation, etc.).
+
+### Global User Memory
+
+**The problem it solves:** You tell the fitness coach "I'm 28, living in Shenzhen" — but the language partner has no idea. Global memory lets you write that once and share it across all experts.
+
+**Storage location:** `~/.engram/_global/memory/` — same structure as a regular Engram's `memory/` directory.
+
+**How to use:**
+
+```
+When the user mentions basic personal info for the first time:
+  → AI calls capture_memory(
+        name="fitness-coach",   ← current expert name (used as throttle key, doesn't affect write location)
+        content="User's name is Jammy, 28 years old, lives in Shenzhen, indie developer",
+        category="user-profile",
+        summary="Jammy, 28, Shenzhen, indie developer",
+        memory_type="fact",
+        is_global=True           ← write to global, not the current Engram
+    )
+  → Next time any Engram is loaded, load_engram appends at the end:
+    ## Global User Memory
+    <global_memory>
+    - `memory/user-profile.md` [2026-02-25] [fact] Jammy, 28, Shenzhen, indie developer
+    </global_memory>
+```
+
+**What belongs in global memory:**
+- Name, age, city
+- Occupation and work background
+- Language preference (Chinese/English)
+- Long-term health conditions (chronic illness, allergies)
+
+**What does NOT belong in global memory:**
+- Expert-specific preferences (training plan preferences → write to the fitness coach's own memory)
+- Time-bound states (currently studying for an exam → use the `expires` parameter)
+
+**Directory structure (see `examples/_global/`):**
+
+```
+~/.engram/_global/
+└── memory/
+    ├── _index.md          ← hot-layer index (last 50 entries)
+    ├── _index_full.md     ← cold-layer index (full history)
+    └── user-profile.md    ← user basic info
+```
 
 `tags` supports multiple labels for topic-based filtering, e.g. `["injury", "knee"]`.
 

@@ -294,6 +294,51 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 
 `is_global=True` 将记忆写入 `~/.engram/_global/memory/`，所有 Engram 加载时都会自动附加这部分记忆。适合跨专家共享的用户基础信息（年龄、城市、职业等）。
 
+### 全局用户记忆（Global Memory）
+
+**解决的问题：** 你告诉健身教练"我28岁、住深圳"，但语言伙伴完全不知道。全局记忆让这类基础信息一次写入、所有专家共享。
+
+**存储位置：** `~/.engram/_global/memory/`，结构与普通 Engram 的 memory 目录完全相同。
+
+**使用方式：**
+
+```
+用户第一次提到自己的基本信息时：
+  → AI 调用 capture_memory(
+        name="fitness-coach",   ← 当前专家名（用于节流key，不影响写入位置）
+        content="用户名叫 Jammy，28岁，居住在深圳，职业是独立开发者",
+        category="user-profile",
+        summary="Jammy，28岁，深圳，独立开发者",
+        memory_type="fact",
+        is_global=True           ← 写入全局，而非当前 Engram
+    )
+  → 下次加载任意 Engram 时，load_engram 返回内容末尾自动附加：
+    ## 全局用户记忆
+    <global_memory>
+    - `memory/user-profile.md` [2026-02-25] [fact] Jammy，28岁，深圳，独立开发者
+    </global_memory>
+```
+
+**适合写入全局的信息：**
+- 姓名、年龄、城市
+- 职业和工作背景
+- 语言偏好（中文/英文）
+- 长期健康状况（如慢性病、过敏）
+
+**不适合写入全局的信息：**
+- 特定专家领域的偏好（训练计划偏好 → 写健身教练自己的 memory）
+- 有时效性的状态（正在备考 → 用 expires 参数）
+
+**目录结构示例（参见 `examples/_global/`）：**
+
+```
+~/.engram/_global/
+└── memory/
+    ├── _index.md          ← 热层索引（最近50条）
+    ├── _index_full.md     ← 冷层索引（全量）
+    └── user-profile.md    ← 用户基础信息
+```
+
 ### 记忆压缩（consolidate_memory）
 
 随着对话积累，某个 category 的原始条目会越来越多。`consolidate_memory` 解决这个问题：
