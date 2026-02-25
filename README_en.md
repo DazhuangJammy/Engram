@@ -227,7 +227,7 @@ engram-server init my-expert --packs-dir ~/.engram
 | `load_engram` | `name`, `query` | Load role/workflow/rules full text + knowledge index (with inline summaries) + examples index (with uses) |
 | `read_engram_file` | `name`, `path` | Read a single file on demand (with path traversal protection) |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
-| `capture_memory` | `name`, `content`, `category`, `summary` | Capture user preferences and key info during conversation, auto-stored in memory/ |
+| `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | Capture user preferences and key info during conversation, auto-stored in memory/ with type labels, tags, and conversation scope |
 | `install_engram` | `source` | Install Engram pack from git URL |
 
 ### `load_engram` Response Format
@@ -254,10 +254,30 @@ engram-server init my-expert --packs-dir ~/.engram
 {examples/_index.md content, with uses references}
 
 ## Dynamic Memory
-{memory/_index.md content, with auto-captured user preferences and key info}
+{memory/_index.md content, with auto-captured user preferences and key info, wrapped in <memory> tags}
 ```
 
-## How Agents Use Engram
+### Memory Types (memory_type)
+
+`capture_memory` supports five semantic types to help AI understand and retrieve memories more accurately:
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `preference` | User preferences | Prefers morning workouts, dislikes running |
+| `fact` | Objective facts about the user | Left knee injury, height 175cm |
+| `decision` | Key decisions made during conversation | Decided to start with 3x/week |
+| `history` | Important conversation milestones | Passed first-round algorithm interview |
+| `general` | Default, unclassified | Other information |
+
+`tags` supports multiple labels for topic-based filtering, e.g. `["injury", "knee"]`.
+
+`conversation_id` is optional — binds a memory to a specific conversation for future scoped retrieval.
+
+### Throttle Protection
+
+Same Engram + same category + same content captured within 30 seconds is silently skipped (returns success) to prevent duplicate writes.
+
+
 
 ### Automatic Mode
 
@@ -478,7 +498,8 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
 When a user's question matches an expert, call load_engram(name, query) to load its base layer and indexes.
 Check the knowledge index summaries; when you need details, call read_engram_file(name, path) to read full knowledge or examples.
-When you identify important user preferences or key information during conversation, call capture_memory(name, content, category, summary) to save it.
+When you identify important user preferences or key information during conversation, call capture_memory(name, content, category, summary, memory_type, tags) to save it.
+memory_type options: preference | fact | decision | history | general
 Users can also specify an expert directly with @expert-name.
 ```
 
@@ -513,6 +534,15 @@ pytest -q
 - Write capability: `write_engram_file` enables auto-packaging Engrams from conversations
 - `load_engram` automatically loads `memory/_index.md`, no need for users to repeat themselves
 - All example Engrams now include memory/ samples
+
+### Completed (v0.3.0)
+
+- `capture_memory` adds `memory_type` semantic classification (preference/fact/decision/history/general)
+- `capture_memory` adds `tags` parameter for multi-label filtering
+- `capture_memory` adds `conversation_id` for conversation-scoped memory binding
+- Throttle protection: duplicate content within 30 seconds is silently skipped
+- `load_engram` wraps dynamic memory in `<memory>` tags for clear AI distinction from knowledge
+- Memory index format upgraded: includes type labels and tag info
 
 ### Planned
 

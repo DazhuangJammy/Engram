@@ -210,6 +210,8 @@ async def test_capture_memory_and_load(tmp_path: Path) -> None:
                     "content": "用户偏好晨练",
                     "category": "preferences",
                     "summary": "喜欢早上训练",
+                    "memory_type": "preference",
+                    "tags": ["fitness"],
                 },
             )
         )
@@ -224,8 +226,10 @@ async def test_capture_memory_and_load(tmp_path: Path) -> None:
 
     assert "已记录" in cap_result
     assert "喜欢早上训练" in cap_result
+    assert "[preference]" in cap_result
     assert "## 动态记忆" in loaded
     assert "喜欢早上训练" in loaded
+    assert "<memory>" in loaded
 
 
 def _setup_tmp_engram(tmp_path: Path, name: str) -> None:

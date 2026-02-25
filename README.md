@@ -229,7 +229,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `load_engram` | `name`, `query` | 加载角色/工作流程/规则全文 + 知识索引（含内联摘要）+ 案例索引（含 uses） |
 | `read_engram_file` | `name`, `path` | 按需读取单个文件（含路径越界保护） |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
-| `capture_memory` | `name`, `content`, `category`, `summary` | 对话中捕获用户偏好和关键信息，自动写入 memory/ |
+| `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | 对话中捕获用户偏好和关键信息，自动写入 memory/，支持类型标注、标签和对话作用域 |
 | `install_engram` | `source` | 从 git URL 安装 Engram 包 |
 
 ### `load_engram` 返回内容格式
@@ -256,10 +256,30 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 {examples/_index.md 内容，含 uses 关联}
 
 ## 动态记忆
-{memory/_index.md 内容，含自动捕获的用户偏好和关键信息}
+{memory/_index.md 内容，含自动捕获的用户偏好和关键信息，用 <memory> 标签包裹}
 ```
 
-## 工作流程：Agent 如何使用 Engram
+### 记忆类型（memory_type）
+
+`capture_memory` 支持五种语义类型，帮助 AI 更准确地理解和检索记忆：
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `preference` | 用户偏好 | 偏好晨练、不喜欢跑步 |
+| `fact` | 关于用户的客观事实 | 左膝有旧伤、身高175cm |
+| `decision` | 对话中做出的关键决定 | 决定从3x/week开始训练 |
+| `history` | 历史对话的重要节点 | 第一轮面试通过算法题 |
+| `general` | 默认，未分类 | 其他信息 |
+
+`tags` 参数支持多标签，方便按主题过滤，如 `["injury", "knee"]`。
+
+`conversation_id` 可选，用于将记忆绑定到特定对话，便于未来按对话维度检索。
+
+### 节流保护
+
+同一 Engram + 同一 category + 相同内容，30 秒内重复调用会被静默跳过（返回成功），避免重复写入。
+
+
 
 ### 自动模式
 
@@ -495,7 +515,8 @@ uses:
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
 当用户的问题匹配某个专家时，调用 load_engram(name, query) 加载常驻层和索引。
 查看知识索引中的摘要，需要细节时调用 read_engram_file(name, path) 读取完整知识或案例。
-对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
+对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags) 记录下来。
+memory_type 可选：preference（偏好）/ fact（事实）/ decision（决定）/ history（历史）/ general（通用）
 用户也可以用 @专家名 直接指定使用哪个专家。
 ```
 
@@ -530,6 +551,15 @@ pytest -q
 - 写入能力：`write_engram_file` 支持从对话自动打包 Engram
 - `load_engram` 自动加载 `memory/_index.md`，无需用户重复说明
 - 所有示例 Engram 新增 memory/ 样板
+
+### 已完成（v0.3.0）
+
+- `capture_memory` 新增 `memory_type`（preference/fact/decision/history/general）语义分类
+- `capture_memory` 新增 `tags` 参数，支持多标签过滤
+- `capture_memory` 新增 `conversation_id` 参数，支持对话作用域绑定
+- 节流保护：30 秒内相同内容重复捕获自动跳过
+- `load_engram` 动态记忆区块用 `<memory>` 标签包裹，AI 可清晰区分记忆与知识
+- 记忆索引格式升级：含类型标注和标签信息
 
 ### 计划中
 

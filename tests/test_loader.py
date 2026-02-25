@@ -150,13 +150,69 @@ def test_capture_memory_creates_entry_and_index(tmp_path: Path) -> None:
 
     category_file = memory_dir / "user-profile.md"
     assert category_file.is_file()
-    assert "用户膝盖有旧伤" in category_file.read_text()
+    text = category_file.read_text()
+    assert "用户膝盖有旧伤" in text
+    assert "type:general" in text
 
     index_file = memory_dir / "_index.md"
     assert index_file.is_file()
     index_content = index_file.read_text()
     assert "膝关节活动度受限" in index_content
     assert "memory/user-profile.md" in index_content
+    assert "[general]" in index_content
+
+
+def test_capture_memory_with_type_and_tags(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    ok = loader.capture_memory(
+        "test-expert",
+        "用户偏好晨练，不喜欢夜间训练",
+        "preferences",
+        "偏好晨练",
+        memory_type="preference",
+        tags=["fitness", "schedule"],
+    )
+    assert ok is True
+
+    category_file = tmp_path / "test-expert" / "memory" / "preferences.md"
+    text = category_file.read_text()
+    assert "type:preference" in text
+    assert "tags:fitness,schedule" in text
+
+    index_content = (tmp_path / "test-expert" / "memory" / "_index.md").read_text()
+    assert "[preference]" in index_content
+    assert "[fitness,schedule]" in index_content
+
+
+def test_capture_memory_with_conversation_id(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    ok = loader.capture_memory(
+        "test-expert",
+        "本次对话决定从3x/week开始",
+        "decisions",
+        "初始训练频率3次/周",
+        memory_type="decision",
+        conversation_id="session-abc123",
+    )
+    assert ok is True
+
+    text = (tmp_path / "test-expert" / "memory" / "decisions.md").read_text()
+    assert "conv:session-abc123" in text
+    assert "type:decision" in text
+
+
+def test_capture_memory_throttle(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    content = "用户膝盖有旧伤"
+
+    loader.capture_memory("test-expert", content, "user-profile", "膝关节活动度受限")
+    loader.capture_memory("test-expert", content, "user-profile", "膝关节活动度受限")
+
+    text = (tmp_path / "test-expert" / "memory" / "user-profile.md").read_text()
+    # Only one entry should exist (second call throttled)
+    assert text.count("用户膝盖有旧伤") == 1
 
 
 def test_load_engram_base_includes_memory(tmp_path: Path) -> None:

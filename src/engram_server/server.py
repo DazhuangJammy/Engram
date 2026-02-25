@@ -185,7 +185,10 @@ def _build_engram_system_prompt(engrams: list[dict]) -> str:
         "4. 需要细节时，调用 read_engram_file(name, path) 读取完整知识或案例\n"
         "5. 加载后以该专家的人格回答：保持其沟通风格、判断倾向和价值观\n"
         "6. 对话中发现用户的重要偏好、个人情况或关键决定时，\n"
-        "   调用 capture_memory(name, content, category, summary) 记录下来\n"
+        "   调用 capture_memory(name, content, category, summary,\n"
+        "   memory_type, tags, conversation_id) 记录下来\n"
+        "   memory_type 可选：preference / fact / decision / history / general\n"
+        "   tags 可选：用于分类过滤，如 [\"fitness\", \"injury\"]\n"
         "7. 下次加载同一专家时，动态记忆会自动带入，无需用户重复说明\n"
     )
 
@@ -293,7 +296,13 @@ Path traversal outside the Engram directory is blocked."""
 
     @app.tool()
     def capture_memory(
-        name: str, content: str, category: str, summary: str
+        name: str,
+        content: str,
+        category: str,
+        summary: str,
+        memory_type: str = "general",
+        tags: list[str] | None = None,
+        conversation_id: str | None = None,
     ) -> str:
         """Capture a memory entry during conversation.
 
@@ -301,19 +310,29 @@ Call this when you identify information worth remembering about the user,
 such as preferences, personal context, past decisions, or feedback.
 The memory is stored in memory/{category}.md and indexed automatically.
 It will be loaded in future conversations with this Engram.
+Duplicate content captured within 30 seconds is silently skipped.
 
 Args:
     name: Engram pack name
     content: The memory content to store
-    category: Topic category (e.g. "user-profile", "preferences", "history")
-    summary: One-line summary for the memory index"""
+    category: File category (e.g. "user-profile", "preferences", "history")
+    summary: One-line summary for the memory index
+    memory_type: Semantic type — "preference" | "fact" | "decision" | "history" | "general"
+    tags: Optional tags for filtering (e.g. ["fitness", "injury"])
+    conversation_id: Optional conversation scope identifier"""
         if not _engram_exists(loader, name):
             return f"未找到 Engram: {name}"
 
-        ok = loader.capture_memory(name, content, category, summary)
+        ok = loader.capture_memory(
+            name, content, category, summary,
+            memory_type=memory_type,
+            tags=tags,
+            conversation_id=conversation_id,
+        )
         if not ok:
             return f"记忆捕获失败: {category}"
-        return f"已记录: [{category}] {summary}"
+        type_label = f"[{memory_type}] " if memory_type != "general" else ""
+        return f"已记录: {type_label}[{category}] {summary}"
 
     return app
 

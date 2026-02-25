@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ class EngramLoader:
 
     def __init__(self, packs_dir: Path):
         self.packs_dir = Path(packs_dir).expanduser()
+        self._throttle_cache: dict[str, float] = {}
 
     def list_engrams(self) -> list[dict[str, Any]]:
         if not self.packs_dir.exists():
@@ -100,7 +102,9 @@ class EngramLoader:
 
         memory_index = self.load_file(name, "memory/_index.md")
         if memory_index and memory_index.strip():
-            sections.append(f"## 动态记忆\n{memory_index.strip()}")
+            sections.append(
+                f"## 动态记忆\n<memory>\n{memory_index.strip()}\n</memory>"
+            )
 
         if not sections:
             return ""
@@ -136,9 +140,28 @@ class EngramLoader:
         return True
 
     def capture_memory(
-        self, name: str, content: str, category: str, summary: str
+        self,
+        name: str,
+        content: str,
+        category: str,
+        summary: str,
+        *,
+        memory_type: str = "general",
+        tags: list[str] | None = None,
+        conversation_id: str | None = None,
+        throttle_seconds: int = 30,
     ) -> bool:
-        """Capture a memory entry and update the memory index."""
+        """Capture a memory entry and update the memory index.
+
+        Duplicate content within throttle_seconds is silently skipped (returns True).
+        """
+        throttle_key = f"{name}:{category}:{content[:120]}"
+        now = time.monotonic()
+        if throttle_key in self._throttle_cache:
+            if now - self._throttle_cache[throttle_key] < throttle_seconds:
+                return True  # already captured recently, skip silently
+        self._throttle_cache[throttle_key] = now
+
         engram_dir = self._resolve_engram_dir(name)
         if engram_dir is None:
             return False
@@ -147,7 +170,15 @@ class EngramLoader:
         memory_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-        entry = f"\n---\n[{ts}]\n{content.strip()}\n"
+
+        meta_parts = [f"[{ts}]", f"type:{memory_type}"]
+        if tags:
+            meta_parts.append(f"tags:{','.join(tags)}")
+        if conversation_id:
+            meta_parts.append(f"conv:{conversation_id}")
+        meta_line = " ".join(meta_parts)
+
+        entry = f"\n---\n{meta_line}\n{content.strip()}\n"
         category_file = memory_dir / f"{category}.md"
         try:
             with category_file.open("a", encoding="utf-8") as f:
@@ -155,7 +186,10 @@ class EngramLoader:
         except OSError:
             return False
 
-        index_line = f"- `memory/{category}.md` [{ts}] {summary.strip()}\n"
+        tag_str = f" [{','.join(tags)}]" if tags else ""
+        index_line = (
+            f"- `memory/{category}.md` [{ts}] [{memory_type}]{tag_str} {summary.strip()}\n"
+        )
         index_file = memory_dir / "_index.md"
         try:
             with index_file.open("a", encoding="utf-8") as f:
