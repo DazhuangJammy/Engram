@@ -41,7 +41,7 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
   - `read_engram_file` reads full knowledge or example files on demand
 - Dynamic memory: automatically captures user preferences and key information during conversation, loaded on next session
 - Global user memory: cross-Engram shared user info (age, city, etc.) auto-attached to every `load_engram`
-- Memory TTL: `expires` field hides stale memories automatically without deleting them
+- Memory TTL: `expires` archives stale memories to `{category}-expired.md` and hides them from loads
 - Tiered index: `_index.md` keeps last 50 entries (hot layer); full history in `_index_full.md` (cold layer)
 - Engram inheritance: `meta.json` supports `extends` field to merge parent knowledge index
 - Cold-start onboarding: `## Onboarding` block in `rules.md` triggers first-session info collection
@@ -69,13 +69,13 @@ Layer 1: Always loaded (returned by load_engram in one call)
   ├── knowledge/_index.md  ← Knowledge index (+ inherited parent knowledge if extends is set)
   ├── examples/_index.md   ← Examples index (file list + one-line descriptions + uses references)
   ├── memory/_index.md     ← Dynamic memory hot layer (last 50 entries, TTL-filtered)
-  └── _global/memory/_index.md  ← Global user memory (shared across all Engrams)
+  └── <packs-dir>/_global/memory/_index.md  ← Global user memory (shared across all Engrams)
 
 Layer 2: Loaded on demand (LLM reads index summaries, then proactively calls)
   └── read_engram_file(name, path)  ← Read any file, including memory/_index_full.md for full history
 
 Layer 3: Written during conversation (LLM captures important info proactively)
-  └── capture_memory(name, content, category, summary, expires, is_global)
+  └── capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)
 ```
 
 The skeleton stays loaded at all times. Knowledge is controlled via "index with inline summaries + full text on demand." No matter how large an Engram gets, the injected content per turn stays manageable.
@@ -187,12 +187,21 @@ Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude 
 You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
 - When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
 - When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
-- For time-sensitive memories ("user is currently studying for an exam", "user is injured"), add an expires param, e.g. expires="2026-06-01".
-- If load_engram returns a "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
-- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary) to save it.
-- After load_engram, if any memory category exceeds 30 entries, proactively call consolidate_memory to compress.
+- For time-sensitive memories ("user is studying for an exam", "user is injured"), add an expires param (YYYY-MM-DD, e.g. "2026-06-01"). Expired entries are archived and hidden from future loads.
+- If load_engram returns an "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
+- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) to save it. Use memory_type to label the semantic type (preference/fact/decision/history/general/inferred/stated) and tags for filtering.
+- If load_engram returns a "💡 N memories total" hint (hot-layer total ≥ 30), first call read_engram_file(name, "memory/{category}.md") to read the busiest category, then call consolidate_memory(name, category, consolidated_content, summary) to compress. You must compose consolidated_content yourself. Only supported for expert memory, not global memory.
 - Users can also specify an expert directly with @expert-name.
 - When you call any MCP tool, tell the user which MCP and which expert you used.
+- After load_engram returns a knowledge index, if the summaries aren't enough to answer, call read_engram_file(name, "knowledge/xxx.md") to read the full file.
+- When the user asks to delete a memory, call delete_memory(name, category, summary). Only for expert memory, not global memory.
+- When the user corrects a memory, call correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags). Only for expert memory, not global memory.
+- When conversation produces knowledge worth keeping long-term (not personal user info), call add_knowledge(name, filename, content, summary).
+- To browse full memory history, call read_engram_file(name, "memory/_index_full.md") to read the cold-layer index.
+- If load_engram returns an "Inherited Knowledge Index" section, call read_engram_file(parent_name, "knowledge/xxx.md") to read parent knowledge files.
+- When the user asks about an engram's details, call get_engram_info(name).
+- When the user wants to install a new engram, call install_engram(source) where source is a git URL.
+- To directly edit an engram's role.md / workflow.md / rules.md or other non-knowledge files, call write_engram_file(name, path, content, mode).
 ```
 
 ### 4. Restart Your AI Client and Start Using
@@ -229,6 +238,8 @@ Initialize a new Engram template:
 engram-server init my-expert --packs-dir ~/.engram
 ```
 
+> If you use a custom `--packs-dir` in MCP config, keep the same directory for all CLI commands here.
+
 ## MCP Tools
 
 | Tool | Parameters | Description |
@@ -236,7 +247,7 @@ engram-server init my-expert --packs-dir ~/.engram
 | `ping` | none | Connectivity test, returns `pong` |
 | `list_engrams` | none | List available Engrams (with descriptions and file counts) |
 | `get_engram_info` | `name` | Get full `meta.json` |
-| `load_engram` | `name`, `query` | Load role/workflow/rules full text + knowledge index (with inline summaries) + examples index (with uses) |
+| `load_engram` | `name`, `query` | Load role/workflow/rules full text + knowledge index (with inline summaries) + examples index (with uses) + dynamic memory hot index + optional global memory/inherited knowledge/onboarding |
 | `read_engram_file` | `name`, `path` | Read a single file on demand (with path traversal protection) |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id`, `expires`, `is_global` | Capture user preferences and key info during conversation, supports type labels, tags, TTL expiry, and global write |
@@ -271,7 +282,15 @@ engram-server init my-expert --packs-dir ~/.engram
 
 ## Dynamic Memory
 {memory/_index.md content, with auto-captured user preferences and key info, wrapped in <memory> tags}
+
+## Global User Memory (optional)
+{active entries from <packs-dir>/_global/memory/_index.md, wrapped in <global_memory> tags}
+
+## Onboarding (optional)
+{content extracted from ## Onboarding in rules.md}
 ```
+
+> If `meta.json` includes `extends`, the response also includes an "Inherited Knowledge Index (from parent)" section. Current behavior supports one inheritance level only.
 
 ### Memory Types (memory_type)
 
@@ -289,15 +308,15 @@ engram-server init my-expert --packs-dir ~/.engram
 
 `stated` vs `inferred`: when referencing `inferred` memories, add hedging language like "possibly"; `correct_memory` can upgrade `inferred` to `stated`.
 
-`expires` accepts an ISO date string (e.g. `"2026-06-01"`). After expiry the memory is hidden from load results but the raw file is not deleted. Suited for time-bound states ("user is studying for an exam").
+`expires` uses `YYYY-MM-DD` (ISO 8601 date part, e.g. `"2026-06-01"`). Expiry is evaluated by UTC date; expired memory is moved to `memory/{category}-expired.md` and hidden from load results. Suited for time-bound states ("user is studying for an exam").
 
-`is_global=True` writes the memory to `~/.engram/_global/memory/`, automatically appended to every Engram on load. Suited for cross-expert user basics (age, city, occupation, etc.).
+`is_global=True` writes the memory to `<packs-dir>/_global/memory/`, automatically appended to every Engram on load. Suited for cross-expert user basics (age, city, occupation, etc.).
 
 ### Global User Memory
 
 **The problem it solves:** You tell the fitness coach "I'm 28, living in Shenzhen" — but the language partner has no idea. Global memory lets you write that once and share it across all experts.
 
-**Storage location:** `~/.engram/_global/memory/` — same structure as a regular Engram's `memory/` directory.
+**Storage location:** `<packs-dir>/_global/memory/` — same structure as a regular Engram's `memory/` directory. If `--packs-dir` is the default `~/.engram`, the actual path is `~/.engram/_global/memory/`.
 
 **How to use:**
 
@@ -331,7 +350,7 @@ When the user mentions basic personal info for the first time:
 **Directory structure (see `examples/_global/`):**
 
 ```
-~/.engram/_global/
+<packs-dir>/_global/
 └── memory/
     ├── _index.md          ← hot-layer index (last 50 entries)
     ├── _index_full.md     ← cold-layer index (full history)
@@ -349,7 +368,7 @@ As conversations accumulate, raw entries in a category keep growing. `consolidat
 ```
 Raw entries keep appending (append-only)
          ↓
-A category exceeds 10 entries
+A category exceeds 30 entries
          ↓
 AI calls read_engram_file to read raw content
          ↓
@@ -440,10 +459,10 @@ User: "@fitness-coach help me create a muscle-building plan"
 
 ```text
 <engram-name>/
-  meta.json
+  meta.json           # supports extends for inheritance
   role.md
   workflow.md
-  rules.md
+  rules.md            # can include ## Onboarding
   knowledge/
     _index.md
     <topic>.md
@@ -451,9 +470,22 @@ User: "@fitness-coach help me create a muscle-building plan"
     _index.md
     <case>.md
   memory/             # dynamic memory (auto-generated, captured during conversation)
-    _index.md
+    _index.md         # hot layer: latest 50 entries
+    _index_full.md    # cold layer: full history (read on demand)
     <category>.md
 ```
+
+`meta.json` can include `extends` for Engram inheritance:
+
+```json
+{
+  "name": "sports-nutritionist",
+  "extends": "fitness-coach",
+  "description": "Sports nutritionist that builds on fitness-coach knowledge"
+}
+```
+
+On load, the parent Engram's knowledge index is merged (single-level inheritance); the child Engram's role/workflow/rules/examples/memory stay independent.
 
 `meta.json` example:
 
@@ -539,6 +571,7 @@ Available templates and examples:
 
 - `examples/template/` — Blank template
 - `examples/fitness-coach/` — Expert advisor (fitness coach)
+- `examples/sports-nutritionist/` — Inheritance example (extends `fitness-coach`, sports nutritionist)
 - `examples/old-friend/` — Chat companion (old friend in San Francisco)
 - `examples/language-partner/` — Language partner (Tokyo office worker, Japanese practice)
 - `examples/mock-interviewer/` — Mock interviewer (full technical interview flow)
@@ -631,12 +664,21 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
 - When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
 - When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
-- For time-sensitive memories ("user is currently studying for an exam", "user is injured"), add an expires param, e.g. expires="2026-06-01".
-- If load_engram returns a "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
-- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary) to save it.
-- After load_engram, if any memory category exceeds 30 entries, proactively call consolidate_memory to compress.
+- For time-sensitive memories ("user is studying for an exam", "user is injured"), add an expires param (YYYY-MM-DD, e.g. "2026-06-01"). Expired entries are archived and hidden from future loads.
+- If load_engram returns an "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
+- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) to save it. Use memory_type to label the semantic type (preference/fact/decision/history/general/inferred/stated) and tags for filtering.
+- If load_engram returns a "💡 N memories total" hint (hot-layer total ≥ 30), first call read_engram_file(name, "memory/{category}.md") to read the busiest category, then call consolidate_memory(name, category, consolidated_content, summary) to compress. You must compose consolidated_content yourself. Only supported for expert memory, not global memory.
 - Users can also specify an expert directly with @expert-name.
 - When you call any MCP tool, tell the user which MCP and which expert you used.
+- After load_engram returns a knowledge index, if the summaries aren't enough to answer, call read_engram_file(name, "knowledge/xxx.md") to read the full file.
+- When the user asks to delete a memory, call delete_memory(name, category, summary). Only for expert memory, not global memory.
+- When the user corrects a memory, call correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags). Only for expert memory, not global memory.
+- When conversation produces knowledge worth keeping long-term (not personal user info), call add_knowledge(name, filename, content, summary).
+- To browse full memory history, call read_engram_file(name, "memory/_index_full.md") to read the cold-layer index.
+- If load_engram returns an "Inherited Knowledge Index" section, call read_engram_file(parent_name, "knowledge/xxx.md") to read parent knowledge files.
+- When the user asks about an engram's details, call get_engram_info(name).
+- When the user wants to install a new engram, call install_engram(source) where source is a git URL.
+- To directly edit an engram's role.md / workflow.md / rules.md or other non-knowledge files, call write_engram_file(name, path, content, mode).
 ```
 
 ### Method B: MCP Prompt
@@ -651,10 +693,10 @@ The tool descriptions for `list_engrams` / `load_engram` / `read_engram_file` al
 
 When the total memory entries in `_index.md` reach the threshold, `load_engram` hints the AI to consolidate. The default is **30 entries**, configurable at:
 
-File: `src/engram_server/loader.py`, line 112
+File: `src/engram_server/loader.py`, constant `_CONSOLIDATE_HINT_THRESHOLD`
 
 ```python
-if entry_count >= 30 else ""   # change 30 to your preferred number
+_CONSOLIDATE_HINT_THRESHOLD = 30
 ```
 
 Suggested values:
@@ -716,7 +758,7 @@ pytest -q
 
 - `consolidate_memory` tool: compress raw entries into a dense summary, archive originals to `{category}-archive.md`
 - `_index.md` holds a single `[consolidated]` entry after compression — context stays manageable
-- `load_engram` auto-hints consolidation when memory entries ≥ 10
+- `load_engram` auto-hints consolidation when memory entries ≥ 30
 - Per-type consolidation strategy (fact: keep forever / preference: merge / history: archive periodically)
 - Example Engrams now include `preferences-archive.md` showing archive format
 

@@ -7,3 +7,7 @@
 ### 任务记录
 - `memory/mission-log.md` [2026-02-18 01:45] [history] 委托查明光集团第七实验室的人员名单，已交付部分数据
 - `memory/mission-log.md` [2026-02-23 04:00] [history] 第二次委托，要一份地下城C区的安全通道图，已完成
+### 置信度与时效演示
+- `memory/trust-log.md` [2026-02-25 02:40] [stated] [deal] 对方明确承诺不外传交易渠道
+- `memory/trust-log.md` [2026-02-25 02:45] [inferred] expires:2026-05-31 [loyalty] 近期可能忠诚度提升（待下一单验证）
+

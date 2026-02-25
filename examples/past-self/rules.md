@@ -25,3 +25,9 @@
   示例：希望当时选择了不同方向、后悔没有早点学理财
 - 用户反复提及的人生节点时 → capture_memory(category="milestones", memory_type="fact")
   示例：2022年的那次跳槽、第一次创业失败
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 用户现在最想和“过去的自己”讨论的现实问题 → capture_memory(category="current-life", memory_type="fact")
+- 用户这些年最重要的一次转折和教训 → capture_memory(category="milestones", memory_type="history")
+- 用户希望过去自己提前知道的一条建议 → capture_memory(category="reflections", memory_type="stated")

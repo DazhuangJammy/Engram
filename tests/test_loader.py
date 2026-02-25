@@ -1,9 +1,20 @@
+import json
+import re
 from pathlib import Path
 
 from engram_server.loader import EngramLoader
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
+
+
+def _concrete_example_dirs() -> list[Path]:
+    """Return non-template examples that should be fully runnable."""
+    return sorted(
+        d for d in EXAMPLES_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith("_") and d.name != "template"
+    )
 
 
 def test_list_engrams_returns_expected_items() -> None:
@@ -387,3 +398,209 @@ def test_add_knowledge_auto_adds_md_extension(tmp_path: Path) -> None:
     loader.add_knowledge("test-expert", "topic-no-ext", "内容", "摘要")
 
     assert (tmp_path / "test-expert" / "knowledge" / "topic-no-ext.md").is_file()
+
+
+def test_expired_memory_is_archived_on_load(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    loader.capture_memory(
+        "test-expert",
+        "这是一个会过期的状态",
+        "status",
+        "临时状态",
+        memory_type="fact",
+        expires="2000-01-01",
+    )
+
+    loaded = loader.load_engram_base("test-expert")
+    assert loaded is not None
+    assert "临时状态" not in loaded
+
+    memory_dir = tmp_path / "test-expert" / "memory"
+    expired_file = memory_dir / "status-expired.md"
+    assert expired_file.is_file()
+    assert "这是一个会过期的状态" in expired_file.read_text(encoding="utf-8")
+
+    status_file = memory_dir / "status.md"
+    assert "这是一个会过期的状态" not in status_file.read_text(encoding="utf-8")
+    assert "临时状态" not in (memory_dir / "_index.md").read_text(encoding="utf-8")
+
+
+def test_hot_index_contains_category_summaries(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    loader.capture_memory(
+        "test-expert", "偏好晨练", "preferences", "喜欢早晨训练", memory_type="preference"
+    )
+    loader.capture_memory(
+        "test-expert", "完成第一次训练", "history", "第一次训练已完成", memory_type="history"
+    )
+
+    index_text = (tmp_path / "test-expert" / "memory" / "_index.md").read_text(encoding="utf-8")
+    assert "## 分类摘要" in index_text
+    assert "`preferences`" in index_text
+    assert "`history`" in index_text
+    assert "## 最近记忆（最多50条）" in index_text
+
+
+def test_consolidation_hint_threshold_is_30(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    for i in range(29):
+        loader.capture_memory("test-expert", f"内容{i}", "history", f"摘要{i}")
+
+    loaded_29 = loader.load_engram_base("test-expert")
+    assert loaded_29 is not None
+    assert "💡 当前共" not in loaded_29
+
+    loader.capture_memory("test-expert", "内容29", "history", "摘要29")
+    loaded_30 = loader.load_engram_base("test-expert")
+    assert loaded_30 is not None
+    assert "💡 当前共 30 条记忆" in loaded_30
+
+
+def test_global_memory_is_loaded_across_engrams(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path, "expert-a")
+    _make_engram(tmp_path, "expert-b")
+
+    ok = loader.capture_memory(
+        "expert-a",
+        "用户居住在深圳",
+        "user-profile",
+        "居住地：深圳",
+        memory_type="fact",
+        is_global=True,
+    )
+    assert ok is True
+
+    loaded = loader.load_engram_base("expert-b")
+    assert loaded is not None
+    assert "## 全局用户记忆" in loaded
+    assert "居住地：深圳" in loaded
+
+
+def test_load_engram_base_supports_parent_knowledge_inheritance(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "meta.json").write_text(
+        '{"name":"parent","description":"parent"}',
+        encoding="utf-8",
+    )
+    (parent / "role.md").write_text("parent role", encoding="utf-8")
+    (parent / "knowledge").mkdir()
+    (parent / "knowledge" / "_index.md").write_text(
+        "- `knowledge/base.md` - 父知识摘要",
+        encoding="utf-8",
+    )
+
+    child = tmp_path / "child"
+    child.mkdir()
+    (child / "meta.json").write_text(
+        '{"name":"child","description":"child","extends":"parent"}',
+        encoding="utf-8",
+    )
+    (child / "role.md").write_text("child role", encoding="utf-8")
+
+    loader = EngramLoader(tmp_path)
+    loaded = loader.load_engram_base("child")
+    assert loaded is not None
+    assert "## 继承知识索引（来自 parent）" in loaded
+    assert "knowledge/base.md" in loaded
+
+
+def test_onboarding_prompt_only_shows_before_first_memory(tmp_path: Path) -> None:
+    engram_dir = tmp_path / "guide-expert"
+    engram_dir.mkdir()
+    (engram_dir / "meta.json").write_text(
+        '{"name":"guide-expert","description":"guide"}',
+        encoding="utf-8",
+    )
+    (engram_dir / "role.md").write_text("role", encoding="utf-8")
+    (engram_dir / "rules.md").write_text(
+        "# 规则\n\n## Onboarding\n- 了解用户目标\n- 了解用户约束\n",
+        encoding="utf-8",
+    )
+
+    loader = EngramLoader(tmp_path)
+    first_loaded = loader.load_engram_base("guide-expert")
+    assert first_loaded is not None
+    assert "## 首次引导" in first_loaded
+
+    loader.capture_memory("guide-expert", "用户目标是减脂", "user-profile", "目标：减脂")
+    second_loaded = loader.load_engram_base("guide-expert")
+    assert second_loaded is not None
+    assert "## 首次引导" not in second_loaded
+
+
+def test_all_example_rules_have_onboarding_section() -> None:
+    missing = []
+    for rules_file in sorted(EXAMPLES_DIR.glob("*/rules.md")):
+        content = rules_file.read_text(encoding="utf-8")
+        if "## Onboarding" not in content:
+            missing.append(str(rules_file))
+    assert missing == []
+
+
+def test_concrete_examples_have_required_core_files() -> None:
+    required = (
+        "meta.json",
+        "role.md",
+        "rules.md",
+        "workflow.md",
+        "knowledge/_index.md",
+        "examples/_index.md",
+        "memory/_index.md",
+    )
+    missing: list[str] = []
+    for engram_dir in _concrete_example_dirs():
+        for rel in required:
+            if not (engram_dir / rel).is_file():
+                missing.append(f"{engram_dir.name}/{rel}")
+    assert missing == []
+
+
+def test_concrete_example_indexes_only_reference_existing_files() -> None:
+    missing_refs: list[str] = []
+    for engram_dir in _concrete_example_dirs():
+        for index_rel in ("knowledge/_index.md", "examples/_index.md", "memory/_index.md"):
+            index_file = engram_dir / index_rel
+            content = index_file.read_text(encoding="utf-8")
+            for token in re.findall(r"`([^`]+)`", content):
+                if not token.startswith(("knowledge/", "examples/", "memory/")):
+                    continue
+                if not (engram_dir / token).is_file():
+                    missing_refs.append(f"{engram_dir.name}:{index_rel}:{token}")
+    assert missing_refs == []
+
+
+def test_concrete_examples_meta_counts_match_real_files() -> None:
+    mismatches: list[str] = []
+    for engram_dir in _concrete_example_dirs():
+        meta = json.loads((engram_dir / "meta.json").read_text(encoding="utf-8"))
+        knowledge_count = len([
+            f for f in (engram_dir / "knowledge").glob("*.md")
+            if f.name != "_index.md"
+        ])
+        examples_count = len([
+            f for f in (engram_dir / "examples").glob("*.md")
+            if f.name != "_index.md"
+        ])
+        if meta.get("knowledge_count") != knowledge_count:
+            mismatches.append(
+                f"{engram_dir.name}:knowledge_count={meta.get('knowledge_count')} actual={knowledge_count}"
+            )
+        if meta.get("examples_count") != examples_count:
+            mismatches.append(
+                f"{engram_dir.name}:examples_count={meta.get('examples_count')} actual={examples_count}"
+            )
+    assert mismatches == []
+
+
+def test_each_concrete_example_has_expires_and_confidence_memory_samples() -> None:
+    missing_markers: list[str] = []
+    for engram_dir in _concrete_example_dirs():
+        merged = "\n".join(
+            f.read_text(encoding="utf-8")
+            for f in sorted((engram_dir / "memory").glob("*.md"))
+        )
+        for marker in ("expires:", "type:inferred", "type:stated"):
+            if marker not in merged:
+                missing_markers.append(f"{engram_dir.name}:{marker}")
+    assert missing_markers == []

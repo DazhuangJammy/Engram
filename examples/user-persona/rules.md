@@ -29,3 +29,4 @@
 首次对话时，自然地了解以下信息并记录：
 - 产品经理在研究什么产品或功能方向 → capture_memory(category="research-focus", memory_type="fact")
 - 这次想验证的核心假设是什么 → capture_memory(category="research-focus", memory_type="fact")
+- 当前最优先想服务的用户群体是谁 → capture_memory(category="research-focus", memory_type="fact")

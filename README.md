@@ -43,7 +43,7 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
   - `read_engram_file` 按路径按需读取知识或案例全文
 - 动态记忆：对话中自动捕获用户偏好和关键信息，下次加载时自动带入
 - 全局用户记忆：跨专家共享的用户基础信息（年龄、城市等），所有 Engram 加载时自动附加
-- 记忆 TTL：支持 `expires` 字段，过期记忆自动隐藏，不再污染 context
+- 记忆 TTL：支持 `expires` 字段，到期记忆自动归档到 `{category}-expired.md` 并隐藏
 - Index 分层：`_index.md` 只保留最近50条（热层），完整记录写入 `_index_full.md`（冷层）
 - Engram 继承：`meta.json` 支持 `extends` 字段，自动合并父 Engram 的 knowledge index
 - 冷启动引导：`rules.md` 支持 `## Onboarding` 区块，首次使用时自动触发信息收集
@@ -67,16 +67,17 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 第一层：常驻加载（load_engram 时一次性返回）
   ├── role.md              全文  ← 角色人设（背景 + 沟通风格 + 回答原则）
   ├── workflow.md          全文  ← 工作流程（决策步骤）
-  ├── rules.md             全文  ← 运作规则 + 常见错误
-  ├── knowledge/_index.md  ← 知识索引（文件列表 + 一句话描述 + 内联摘要）
+  ├── rules.md             全文  ← 运作规则 + 常见错误 + Onboarding 区块
+  ├── knowledge/_index.md  ← 知识索引（文件列表 + 一句话描述 + 内联摘要，若 extends 会附加父知识索引）
   ├── examples/_index.md   ← 案例索引（文件列表 + 一句话描述 + uses 关联）
-  └── memory/_index.md     ← 动态记忆索引（自动捕获的用户偏好和关键信息）
+  ├── memory/_index.md     ← 动态记忆热层索引（最近50条，TTL过滤）
+  └── <packs-dir>/_global/memory/_index.md  ← 全局用户记忆（跨专家共享）
 
 第二层：按需加载（LLM 根据索引摘要判断后主动调用）
-  └── read_engram_file(name, path)  ← 读取任意知识、案例或记忆文件
+  └── read_engram_file(name, path)  ← 读取任意知识、案例或记忆文件（含 memory/_index_full.md）
 
 第三层：对话中写入（LLM 识别到重要信息时主动调用）
-  └── capture_memory(name, content, category, summary)  ← 捕获用户偏好、关键决定等
+  └── capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)  ← 捕获用户偏好、关键决定等
 ```
 
 骨架常驻不丢，知识通过"索引内联摘要 + 全文按需"控制 token 消耗。不管 Engram 有多大，每次注入的内容都是可控的。
@@ -188,12 +189,21 @@ cp -r ~/engram-mcp-server/examples/fitness-coach ~/.engram/fitness-coach
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
 - 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
 - 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
-- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，如 expires="2026-06-01"
+- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。
 - load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并 capture_memory
-- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
-- load_engram 后若某个记忆分类条目超过 30 条，主动调用 consolidate_memory 压缩
+- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) 记录下来。记录时可用 memory_type 标注语义类型（preference/fact/decision/history/general/inferred/stated），用 tags 打标签便于过滤。
+- load_engram 返回结果中若出现「💡 当前共 N 条记忆」提示（动态记忆热层总条目 ≥ 30），先调用 read_engram_file(name, "memory/{category}.md") 读取条目较多的分类原始内容，再调用 consolidate_memory(name, category, consolidated_content, summary) 压缩（须自行合成 consolidated_content 传入，仅支持专家记忆，不支持全局记忆）
 - 用户也可以用 @专家名 直接指定使用哪个专家。
 - 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
+- load_engram 返回知识索引后，若索引摘要不足以回答问题，调用 read_engram_file(name, "knowledge/xxx.md") 读取具体文件全文再回答
+- 用户要求删除某条记忆时，调用 delete_memory(name, category, summary)（仅支持专家记忆，不支持全局记忆）
+- 用户纠正某条记忆内容时，调用 correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)（仅支持专家记忆，不支持全局记忆）
+- 对话中产生了值得长期保存的新知识（非用户个人信息），调用 add_knowledge(name, filename, content, summary) 写入知识库
+- 当记忆较多或要查历史时，可 read_engram_file(name, "memory/_index_full.md") 查看完整记忆冷层。
+- load_engram 返回内容含「继承知识索引」区块时，知识来自父专家，可调用 read_engram_file(父专家名, "knowledge/xxx.md") 读取具体父专家知识文件
+- 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)
+- 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
+- 需要直接修改 engram 的 role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)
 ```
 
 ### 4. 重启 AI 客户端，开始使用
@@ -203,32 +213,34 @@ cp -r ~/engram-mcp-server/examples/fitness-coach ~/.engram/fitness-coach
 启动 MCP stdio 服务（默认命令）：
 
 ```bash
-engram-server serve --packs-dir ~/.claude/engram
+engram-server serve --packs-dir ~/.engram
 ```
 
 等价写法：
 
 ```bash
-engram-server --packs-dir ~/.claude/engram
+engram-server --packs-dir ~/.engram
 ```
 
 列出已安装 Engram：
 
 ```bash
-engram-server list --packs-dir ~/.claude/engram
+engram-server list --packs-dir ~/.engram
 ```
 
 从 git 安装 Engram：
 
 ```bash
-engram-server install <git-url> --packs-dir ~/.claude/engram
+engram-server install <git-url> --packs-dir ~/.engram
 ```
 
 初始化一个新 Engram 模板：
 
 ```bash
-engram-server init my-expert --packs-dir ~/.claude/engram
+engram-server init my-expert --packs-dir ~/.engram
 ```
+
+> 如果你在 MCP 配置里用了自定义 `--packs-dir`，这里的所有命令也要保持同一个目录。
 
 ## MCP 工具列表
 
@@ -237,7 +249,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `ping` | 无 | 连通性测试，返回 `pong` |
 | `list_engrams` | 无 | 列出可用 Engram（含描述与文件统计） |
 | `get_engram_info` | `name` | 获取完整 `meta.json` |
-| `load_engram` | `name`, `query` | 加载角色/工作流程/规则全文 + 知识索引（含内联摘要）+ 案例索引（含 uses） |
+| `load_engram` | `name`, `query` | 加载角色/工作流程/规则全文 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆（含热层索引）+ 可选全局记忆/继承知识/首次引导 |
 | `read_engram_file` | `name`, `path` | 按需读取单个文件（含路径越界保护） |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id`, `expires`, `is_global` | 对话中捕获用户偏好和关键信息，支持类型标注、标签、TTL过期、全局写入 |
@@ -272,7 +284,15 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 
 ## 动态记忆
 {memory/_index.md 内容，含自动捕获的用户偏好和关键信息，用 <memory> 标签包裹}
+
+## 全局用户记忆（可选）
+{<packs-dir>/_global/memory/_index.md 的活跃条目，用 <global_memory> 标签包裹}
+
+## 首次引导（可选）
+{rules.md 中的 ## Onboarding 区块提取内容}
 ```
+
+> 若 `meta.json` 配置了 `extends`，返回里还会出现"继承知识索引（来自父 Engram）"区块；当前仅支持单层继承。
 
 ### 记忆类型（memory_type）
 
@@ -290,15 +310,15 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 
 `stated` vs `inferred` 的区别：引用 `inferred` 类记忆时应加"可能"等不确定性措辞；`correct_memory` 可将 `inferred` 升级为 `stated`。
 
-`expires` 参数支持 ISO 日期字符串（如 `"2026-06-01"`），到期后记忆自动从加载结果中隐藏，但不删除原始文件。适合状态性记忆（"用户正在备考"）。
+`expires` 参数使用 `YYYY-MM-DD`（ISO 8601 的日期部分，如 `"2026-06-01"`）。系统按 UTC 日期判断是否过期，到期后记忆会转存到 `memory/{category}-expired.md` 并从加载结果中隐藏。适合状态性记忆（"用户正在备考"）。
 
-`is_global=True` 将记忆写入 `~/.engram/_global/memory/`，所有 Engram 加载时都会自动附加这部分记忆。适合跨专家共享的用户基础信息（年龄、城市、职业等）。
+`is_global=True` 将记忆写入 `<packs-dir>/_global/memory/`，所有 Engram 加载时都会自动附加这部分记忆。适合跨专家共享的用户基础信息（年龄、城市、职业等）。
 
 ### 全局用户记忆（Global Memory）
 
 **解决的问题：** 你告诉健身教练"我28岁、住深圳"，但语言伙伴完全不知道。全局记忆让这类基础信息一次写入、所有专家共享。
 
-**存储位置：** `~/.engram/_global/memory/`，结构与普通 Engram 的 memory 目录完全相同。
+**存储位置：** `<packs-dir>/_global/memory/`，结构与普通 Engram 的 memory 目录完全相同。若 `--packs-dir` 使用默认值 `~/.engram`，实际路径就是 `~/.engram/_global/memory/`。
 
 **使用方式：**
 
@@ -332,7 +352,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 **目录结构示例（参见 `examples/_global/`）：**
 
 ```
-~/.engram/_global/
+<packs-dir>/_global/
 └── memory/
     ├── _index.md          ← 热层索引（最近50条）
     ├── _index_full.md     ← 冷层索引（全量）
@@ -346,7 +366,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 ```
 原始条目不断追加（append-only）
          ↓
-某个 category 超过 10 条时
+某个 category 超过 30 条时
          ↓
 AI 调用 read_engram_file 读取原始内容
          ↓
@@ -463,7 +483,7 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
 }
 ```
 
-加载时自动合并父 Engram 的 knowledge index，子 Engram 的 role/memory 完全独立。
+加载时自动合并父 Engram 的 knowledge index（仅单层继承）；子 Engram 的 role/workflow/rules/examples/memory 完全独立，不继承父项。
 
 `meta.json` 示例：
 
@@ -681,12 +701,21 @@ uses:
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
 - 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
 - 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
-- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，如 expires="2026-06-01"
+- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。
 - load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并 capture_memory
-- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
-- load_engram 后若某个记忆分类条目超过 30 条，主动调用 consolidate_memory 压缩
+- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) 记录下来。记录时可用 memory_type 标注语义类型（preference/fact/decision/history/general/inferred/stated），用 tags 打标签便于过滤。
+- load_engram 返回结果中若出现「💡 当前共 N 条记忆」提示（动态记忆热层总条目 ≥ 30），先调用 read_engram_file(name, "memory/{category}.md") 读取条目较多的分类原始内容，再调用 consolidate_memory(name, category, consolidated_content, summary) 压缩（须自行合成 consolidated_content 传入，仅支持专家记忆，不支持全局记忆）
 - 用户也可以用 @专家名 直接指定使用哪个专家。
 - 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
+- load_engram 返回知识索引后，若索引摘要不足以回答问题，调用 read_engram_file(name, "knowledge/xxx.md") 读取具体文件全文再回答
+- 用户要求删除某条记忆时，调用 delete_memory(name, category, summary)（仅支持专家记忆，不支持全局记忆）
+- 用户纠正某条记忆内容时，调用 correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)（仅支持专家记忆，不支持全局记忆）
+- 对话中产生了值得长期保存的新知识（非用户个人信息），调用 add_knowledge(name, filename, content, summary) 写入知识库
+- 当记忆较多或要查历史时，可 read_engram_file(name, "memory/_index_full.md") 查看完整记忆冷层。
+- load_engram 返回内容含「继承知识索引」区块时，知识来自父专家，可调用 read_engram_file(父专家名, "knowledge/xxx.md") 读取具体父专家知识文件
+- 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)
+- 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
+- 需要直接修改 engram 的 role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)
 ```
 
 ### 方式 B：MCP Prompt
@@ -701,10 +730,10 @@ uses:
 
 当 `_index.md` 中的记忆条目总数达到阈值时，`load_engram` 会提示 AI 进行压缩。默认阈值是 **30 条**，可在以下位置修改：
 
-文件：`src/engram_server/loader.py`，第 112 行
+文件：`src/engram_server/loader.py`，常量 `_CONSOLIDATE_HINT_THRESHOLD`
 
 ```python
-if entry_count >= 30 else ""   # 把 30 改成你想要的数字
+_CONSOLIDATE_HINT_THRESHOLD = 30
 ```
 
 建议范围：
@@ -766,7 +795,7 @@ pytest -q
 
 - `consolidate_memory` 工具：将原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md`
 - `_index.md` 压缩后只保留一条 `[consolidated]` 条目，context 注入量永远可控
-- `load_engram` 当记忆条目 ≥ 10 条时自动提示压缩
+- `load_engram` 当记忆条目 ≥ 30 条时自动提示压缩
 - 按记忆类型分层压缩策略（fact 永久保留 / preference 合并 / history 定期归档）
 - 示例 Engram 新增 `preferences-archive.md` 展示归档格式
 

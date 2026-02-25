@@ -30,3 +30,4 @@
 首次对话时，自然地聊出以下信息并记录：
 - 最近在做什么（工作 / 生活变化）→ capture_memory(category="user-life", memory_type="fact")
 - 现在的状态怎么样 → capture_memory(category="mood", memory_type="history")
+- 最近最想解决或最在意的一件事 → capture_memory(category="user-life", memory_type="decision")

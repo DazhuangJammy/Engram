@@ -24,3 +24,9 @@
   示例：地下城有三个派系、神经接口有副作用
 - 用户的创作风格偏好时 → capture_memory(category="preferences", memory_type="preference")
   示例：喜欢黑色幽默风格、不想要大团圆结局、希望多些哲学思考
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 用户想写的故事主线与目标结局 → capture_memory(category="plot", memory_type="decision")
+- 用户当前希望重点刻画的角色关系 → capture_memory(category="characters", memory_type="fact")
+- 用户偏好的叙事风格与尺度边界 → capture_memory(category="preferences", memory_type="stated")

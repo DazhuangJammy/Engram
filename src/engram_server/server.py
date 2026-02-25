@@ -189,11 +189,11 @@ def _build_engram_system_prompt(engrams: list[dict]) -> str:
         "   memory_type, tags, conversation_id, expires, is_global) 记录下来\n"
         "   memory_type 可选：preference / fact / decision / history / general\n"
         "                     inferred（LLM推断）/ stated（用户明确表达）\n"
-        "   expires 可选：ISO日期字符串，如 '2026-06-01'，到期后自动隐藏\n"
+        "   expires 可选：ISO日期字符串，如 '2026-06-01'，到期后自动归档到 {category}-expired.md 并隐藏\n"
         "   is_global=True：写入跨专家共享的全局记忆（如用户年龄、城市等基础信息）\n"
         "   tags 可选：用于分类过滤，如 [\"fitness\", \"injury\"]\n"
         "7. 下次加载同一专家时，动态记忆和全局记忆会自动带入，无需用户重复说明\n"
-        "8. 当某个 category 的记忆条目超过 10 条时，先用 read_engram_file 读取原始内容，\n"
+        "8. 当某个 category 的记忆条目超过 30 条时，先用 read_engram_file 读取原始内容，\n"
         "   再调用 consolidate_memory(name, category, consolidated_content, summary)\n"
         "   将多条原始记录压缩为一条密集摘要，原始条目自动归档\n"
         "9. 若加载后看到「首次引导」区块，请在对话中自然地收集所列信息并 capture_memory\n"
@@ -335,7 +335,7 @@ Args:
     tags: Optional tags for filtering (e.g. ["fitness", "injury"])
     conversation_id: Optional conversation scope identifier
     expires: Optional expiry date ISO string (e.g. "2026-06-01"). Expired entries
-             are hidden from future loads but not deleted.
+             are moved to memory/{category}-expired.md and hidden from future loads.
     is_global: If True, write to shared _global/memory/ instead of this Engram"""
         if not is_global and not _engram_exists(loader, name):
             return f"未找到 Engram: {name}"
@@ -364,7 +364,7 @@ Args:
     ) -> str:
         """Consolidate raw memory entries into a dense summary, archiving originals.
 
-Call this when a memory category has accumulated many entries (10+).
+Call this when a memory category has accumulated many entries (30+).
 Workflow:
   1. Call read_engram_file(name, "memory/{category}.md") to read all raw entries
   2. Write a dense, deduplicated summary as consolidated_content
@@ -422,7 +422,8 @@ Args:
     old_summary: Exact summary text from the index to identify the entry
     new_content: The corrected memory content
     new_summary: Updated one-line summary for the index
-    memory_type: Semantic type — "preference" | "fact" | "decision" | "history" | "general"
+    memory_type: Semantic type — "preference" | "fact" | "decision" | "history"
+                 | "general" | "inferred" (LLM-deduced) | "stated" (user explicitly said)
     tags: Optional updated tags"""
         if not _engram_exists(loader, name):
             return f"未找到 Engram: {name}"

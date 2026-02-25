@@ -1,9 +1,18 @@
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
 - 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
 - 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
-- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加expires 参数，如expires="2026-06-01"                                                                                
+- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。                                                                                
 - load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并capture_memory   
-- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
-- load_engram 后若某个记忆分类条目超过 30 条，主动调用 consolidate_memory 压缩
+- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) 记录下来。记录时可用 memory_type标注语义类型（preference/fact/decision/history/general/inferred/stated），用 tags 打标签便于过滤。            
+- load_engram 返回结果中若出现「💡 当前共 N 条记忆」提示（动态记忆热层总条目 ≥ 30），先调用 read_engram_file(name, "memory/{category}.md") 读取条目较多的分类原始内容，再调用 consolidate_memory(name, category, consolidated_content, summary) 压缩（须自行合成 consolidated_content 传入，仅支持专家记忆，不支持全局记忆）
 - 用户也可以用 @专家名 直接指定使用哪个专家。
 - 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
+- load_engram 返回知识索引后，若索引摘要不足以回答问题，调用 read_engram_file(name, "knowledge/xxx.md") 读取具体文件全文再回答                                                    
+- 用户要求删除某条记忆时，调用 delete_memory(name, category, summary)（仅支持专家记忆，不支持全局记忆）
+- 用户纠正某条记忆内容时，调用 correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)（仅支持专家记忆，不支持全局记忆）
+- 对话中产生了值得长期保存的新知识（非用户个人信息），调用 add_knowledge(name, filename, content, summary) 写入知识库   
+- 当记忆较多或要查历史时，可 read_engram_file(name, "memory/_index_full.md") 查看完整记忆冷层。
+- load_engram 返回内容含「继承知识索引」区块时，知识来自父专家，可调用 read_engram_file(父专家名, "knowledge/xxx.md") 读取具体父专家知识文件
+- 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)                                                                                                                    
+- 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
+- 需要直接修改 engram 的role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)  

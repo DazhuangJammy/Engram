@@ -23,3 +23,9 @@
   示例：正在经历职业转型、家庭关系紧张、感到迷失方向
 - 用户对某个观点表明态度时 → capture_memory(category="stance", memory_type="preference")
   示例：认同心即理、对格物致知有疑问
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 用户当前最想解决的人生困惑 → capture_memory(category="questions", memory_type="fact")
+- 用户正在经历的现实处境（工作/家庭/关系）→ capture_memory(category="user-context", memory_type="fact")
+- 用户对“知行合一”或“致良知”的初始看法 → capture_memory(category="stance", memory_type="stated")
