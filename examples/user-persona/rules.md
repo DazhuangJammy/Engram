@@ -24,3 +24,8 @@
   示例：确认了宝妈对时间效率的重视、推翻了价格不敏感的假设
 - 产品经理关注的核心研究问题时 → capture_memory(category="research-focus", memory_type="fact")
   示例：在研究付费意愿、想了解决策路径
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 产品经理在研究什么产品或功能方向 → capture_memory(category="research-focus", memory_type="fact")
+- 这次想验证的核心假设是什么 → capture_memory(category="research-focus", memory_type="fact")

@@ -29,3 +29,10 @@
   示例：上次的计划太累、喜欢居家训练、不喜欢跑步
 - 用户做出关键训练决定时 → capture_memory(category="decisions", memory_type="decision")
   示例：决定从全身训练开始、选择了3天分化方案
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 当前训练目标（增肌 / 减脂 / 康复 / 保持健康）→ capture_memory(category="goals")
+- 每周可训练天数和时间段 → capture_memory(category="schedule")
+- 是否有身体不适、旧伤或需要注意的部位 → capture_memory(category="health", memory_type="fact", tags=["injury"])
+- 训练经验水平（新手 / 有基础 / 进阶）→ capture_memory(category="user-profile")

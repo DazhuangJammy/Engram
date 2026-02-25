@@ -186,13 +186,18 @@ def _build_engram_system_prompt(engrams: list[dict]) -> str:
         "5. 加载后以该专家的人格回答：保持其沟通风格、判断倾向和价值观\n"
         "6. 对话中发现用户的重要偏好、个人情况或关键决定时，\n"
         "   调用 capture_memory(name, content, category, summary,\n"
-        "   memory_type, tags, conversation_id) 记录下来\n"
+        "   memory_type, tags, conversation_id, expires, is_global) 记录下来\n"
         "   memory_type 可选：preference / fact / decision / history / general\n"
+        "                     inferred（LLM推断）/ stated（用户明确表达）\n"
+        "   expires 可选：ISO日期字符串，如 '2026-06-01'，到期后自动隐藏\n"
+        "   is_global=True：写入跨专家共享的全局记忆（如用户年龄、城市等基础信息）\n"
         "   tags 可选：用于分类过滤，如 [\"fitness\", \"injury\"]\n"
-        "7. 下次加载同一专家时，动态记忆会自动带入，无需用户重复说明\n"
+        "7. 下次加载同一专家时，动态记忆和全局记忆会自动带入，无需用户重复说明\n"
         "8. 当某个 category 的记忆条目超过 10 条时，先用 read_engram_file 读取原始内容，\n"
         "   再调用 consolidate_memory(name, category, consolidated_content, summary)\n"
         "   将多条原始记录压缩为一条密集摘要，原始条目自动归档\n"
+        "9. 若加载后看到「首次引导」区块，请在对话中自然地收集所列信息并 capture_memory\n"
+        "10. 若 Engram 有「继承知识索引」区块，其知识来自父 Engram，可按需 read_engram_file 读取\n"
     )
 
 
@@ -306,6 +311,8 @@ Path traversal outside the Engram directory is blocked."""
         memory_type: str = "general",
         tags: list[str] | None = None,
         conversation_id: str | None = None,
+        expires: str | None = None,
+        is_global: bool = False,
     ) -> str:
         """Capture a memory entry during conversation.
 
@@ -315,15 +322,22 @@ The memory is stored in memory/{category}.md and indexed automatically.
 It will be loaded in future conversations with this Engram.
 Duplicate content captured within 30 seconds is silently skipped.
 
+Set is_global=True to store in the shared _global/memory/ directory,
+making the memory available across ALL Engrams (e.g. user age, location).
+
 Args:
-    name: Engram pack name
+    name: Engram pack name (used for throttle key even when is_global=True)
     content: The memory content to store
     category: File category (e.g. "user-profile", "preferences", "history")
     summary: One-line summary for the memory index
-    memory_type: Semantic type — "preference" | "fact" | "decision" | "history" | "general"
+    memory_type: Semantic type — "preference" | "fact" | "decision" | "history"
+                 | "general" | "inferred" (LLM-deduced) | "stated" (user explicitly said)
     tags: Optional tags for filtering (e.g. ["fitness", "injury"])
-    conversation_id: Optional conversation scope identifier"""
-        if not _engram_exists(loader, name):
+    conversation_id: Optional conversation scope identifier
+    expires: Optional expiry date ISO string (e.g. "2026-06-01"). Expired entries
+             are hidden from future loads but not deleted.
+    is_global: If True, write to shared _global/memory/ instead of this Engram"""
+        if not is_global and not _engram_exists(loader, name):
             return f"未找到 Engram: {name}"
 
         ok = loader.capture_memory(
@@ -331,11 +345,15 @@ Args:
             memory_type=memory_type,
             tags=tags,
             conversation_id=conversation_id,
+            expires=expires,
+            is_global=is_global,
         )
         if not ok:
             return f"记忆捕获失败: {category}"
+        scope = "[全局] " if is_global else ""
         type_label = f"[{memory_type}] " if memory_type != "general" else ""
-        return f"已记录: {type_label}[{category}] {summary}"
+        expires_label = f" (expires:{expires})" if expires else ""
+        return f"已记录: {scope}{type_label}[{category}] {summary}{expires_label}"
 
     @app.tool()
     def consolidate_memory(

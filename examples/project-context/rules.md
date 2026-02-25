@@ -19,3 +19,9 @@
   示例：已经看完了用户服务文档、跑通了本地环境
 - 成员的技术背景时 → capture_memory(category="member-profile", memory_type="fact")
   示例：有3年React经验、没接触过微服务
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 新成员的姓名、角色和所属团队 → capture_memory(category="team-members", memory_type="fact")
+- 技术背景和工作年限 → capture_memory(category="member-profile", memory_type="fact")
+- 当前负责的任务或模块 → capture_memory(category="onboarding-progress", memory_type="history")

@@ -39,9 +39,14 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 - 零向量依赖：不使用 chromadb / litellm，只依赖 `mcp`
 - MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`delete_memory`、`correct_memory`、`add_knowledge`、`install_engram`
 - 索引驱动加载：
-  - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引
+  - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引 + 全局用户记忆
   - `read_engram_file` 按路径按需读取知识或案例全文
 - 动态记忆：对话中自动捕获用户偏好和关键信息，下次加载时自动带入
+- 全局用户记忆：跨专家共享的用户基础信息（年龄、城市等），所有 Engram 加载时自动附加
+- 记忆 TTL：支持 `expires` 字段，过期记忆自动隐藏，不再污染 context
+- Index 分层：`_index.md` 只保留最近50条（热层），完整记录写入 `_index_full.md`（冷层）
+- Engram 继承：`meta.json` 支持 `extends` 字段，自动合并父 Engram 的 knowledge index
+- 冷启动引导：`rules.md` 支持 `## Onboarding` 区块，首次使用时自动触发信息收集
 - CLI 命令：`serve` / `list` / `install` / `init`
 
 ## 设计理念：索引驱动的分层懒加载
@@ -181,8 +186,14 @@ cp -r ~/engram-mcp-server/examples/fitness-coach ~/.engram/fitness-coach
 
 ```text
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
-当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
-用户也可以用 @专家名 直接指定使用哪个专家。
+- 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
+- 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
+- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，如 expires="2026-06-01"
+- load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并 capture_memory
+- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
+- load_engram 后若某个记忆分类条目超过 30 条，主动调用 consolidate_memory 压缩
+- 用户也可以用 @专家名 直接指定使用哪个专家。
+- 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
 ```
 
 ### 4. 重启 AI 客户端，开始使用
@@ -229,7 +240,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `load_engram` | `name`, `query` | 加载角色/工作流程/规则全文 + 知识索引（含内联摘要）+ 案例索引（含 uses） |
 | `read_engram_file` | `name`, `path` | 按需读取单个文件（含路径越界保护） |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
-| `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | 对话中捕获用户偏好和关键信息，自动写入 memory/，支持类型标注、标签和对话作用域 |
+| `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id`, `expires`, `is_global` | 对话中捕获用户偏好和关键信息，支持类型标注、标签、TTL过期、全局写入 |
 | `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | 将某个 category 的原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md` |
 | `delete_memory` | `name`, `category`, `summary` | 按摘要精确删除一条记忆，同时从索引和分类文件中移除 |
 | `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | 修正一条已有记忆的内容，更新索引和分类文件 |
@@ -265,7 +276,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 
 ### 记忆类型（memory_type）
 
-`capture_memory` 支持五种语义类型，帮助 AI 更准确地理解和检索记忆：
+`capture_memory` 支持七种语义类型：
 
 | 类型 | 说明 | 示例 |
 |------|------|------|
@@ -273,11 +284,15 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `fact` | 关于用户的客观事实 | 左膝有旧伤、身高175cm |
 | `decision` | 对话中做出的关键决定 | 决定从3x/week开始训练 |
 | `history` | 历史对话的重要节点 | 第一轮面试通过算法题 |
+| `stated` | 用户明确说出的信息（高置信度）| "我膝盖有旧伤" |
+| `inferred` | LLM 从行为推断的信息（低置信度）| 连续3次选早晨训练→推断偏好早起 |
 | `general` | 默认，未分类 | 其他信息 |
 
-`tags` 参数支持多标签，方便按主题过滤，如 `["injury", "knee"]`。
+`stated` vs `inferred` 的区别：引用 `inferred` 类记忆时应加"可能"等不确定性措辞；`correct_memory` 可将 `inferred` 升级为 `stated`。
 
-`conversation_id` 可选，用于将记忆绑定到特定对话，便于未来按对话维度检索。
+`expires` 参数支持 ISO 日期字符串（如 `"2026-06-01"`），到期后记忆自动从加载结果中隐藏，但不删除原始文件。适合状态性记忆（"用户正在备考"）。
+
+`is_global=True` 将记忆写入 `~/.engram/_global/memory/`，所有 Engram 加载时都会自动附加这部分记忆。适合跨专家共享的用户基础信息（年龄、城市、职业等）。
 
 ### 记忆压缩（consolidate_memory）
 
@@ -377,10 +392,10 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
 
 ```text
 <engram-name>/
-  meta.json
+  meta.json           # 支持 extends 字段实现继承
   role.md
   workflow.md
-  rules.md
+  rules.md            # 支持 ## Onboarding 区块
   knowledge/
     _index.md
     <topic>.md
@@ -388,9 +403,22 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
     _index.md
     <case>.md
   memory/             # 动态记忆（自动生成，对话中捕获）
-    _index.md
+    _index.md         # 热层：最近50条
+    _index_full.md    # 冷层：完整记录（按需加载）
     <category>.md
 ```
+
+`meta.json` 支持 `extends` 字段实现 Engram 继承：
+
+```json
+{
+  "name": "sports-nutritionist",
+  "extends": "fitness-coach",
+  "description": "运动营养师，在健身教练基础上增加营养学知识"
+}
+```
+
+加载时自动合并父 Engram 的 knowledge index，子 Engram 的 role/memory 完全独立。
 
 `meta.json` 示例：
 
@@ -513,8 +541,9 @@ uses:
 
 可直接参考模板和完整示例：
 
-- `examples/template/` — 空白模板
+- `examples/template/` — 空白模板（含 Onboarding 区块示例）
 - `examples/fitness-coach/` — 专家顾问（健身教练）
+- `examples/sports-nutritionist/` — 继承示例（extends fitness-coach，运动营养师）
 - `examples/old-friend/` — 聊天伙伴（远在旧金山的老朋友）
 - `examples/language-partner/` — 语言陪练（东京上班族，日语练习）
 - `examples/mock-interviewer/` — 模拟面试官（技术面试全流程）
@@ -605,11 +634,14 @@ uses:
 
 ```text
 你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
-当用户的问题匹配某个专家时，调用 load_engram(name, query) 加载常驻层和索引。
-查看知识索引中的摘要，需要细节时调用 read_engram_file(name, path) 读取完整知识或案例。
-对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags) 记录下来。
-memory_type 可选：preference（偏好）/ fact（事实）/ decision（决定）/ history（历史）/ general（通用）
-用户也可以用 @专家名 直接指定使用哪个专家。
+- 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
+- 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
+- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，如 expires="2026-06-01"
+- load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并 capture_memory
+- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary) 记录下来。
+- load_engram 后若某个记忆分类条目超过 30 条，主动调用 consolidate_memory 压缩
+- 用户也可以用 @专家名 直接指定使用哪个专家。
+- 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
 ```
 
 ### 方式 B：MCP Prompt

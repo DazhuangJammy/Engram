@@ -14,3 +14,9 @@
   示例：选择了某个方案、确定了某个方向
 - 对话中的重要历史节点时 → capture_memory(category="history", memory_type="history")
   示例：完成了某个里程碑、发生了某件重要的事
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- （在此填写3-5个关键问题，引导 LLM 在首次对话中自然收集）
+- 示例：用户的背景和目标 → capture_memory(category="user-profile", memory_type="fact")
+- 示例：用户的核心需求或约束 → capture_memory(category="user-profile", memory_type="fact")

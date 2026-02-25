@@ -37,9 +37,14 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 - Zero vector dependencies: no chromadb / litellm, only depends on `mcp`
 - MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `delete_memory`, `correct_memory`, `add_knowledge`, `install_engram`
 - Index-driven loading:
-  - `load_engram` returns role/workflow/rules + knowledge index (with inline summaries) + examples index (with uses) + dynamic memory index
+  - `load_engram` returns role/workflow/rules + knowledge index + examples index + dynamic memory index + global user memory
   - `read_engram_file` reads full knowledge or example files on demand
 - Dynamic memory: automatically captures user preferences and key information during conversation, loaded on next session
+- Global user memory: cross-Engram shared user info (age, city, etc.) auto-attached to every `load_engram`
+- Memory TTL: `expires` field hides stale memories automatically without deleting them
+- Tiered index: `_index.md` keeps last 50 entries (hot layer); full history in `_index_full.md` (cold layer)
+- Engram inheritance: `meta.json` supports `extends` field to merge parent knowledge index
+- Cold-start onboarding: `## Onboarding` block in `rules.md` triggers first-session info collection
 - CLI commands: `serve` / `list` / `install` / `init`
 
 ## Design Philosophy: Index-Driven Layered Lazy Loading
@@ -60,16 +65,17 @@ After an Engram is loaded, content isn't dumped all at once — it's loaded in l
 Layer 1: Always loaded (returned by load_engram in one call)
   ├── role.md              Full text  ← Persona (background + communication style + principles)
   ├── workflow.md          Full text  ← Decision workflow (step-by-step process)
-  ├── rules.md             Full text  ← Operating rules + common mistakes
-  ├── knowledge/_index.md  ← Knowledge index (file list + one-line descriptions + inline summaries)
+  ├── rules.md             Full text  ← Operating rules + common mistakes + Onboarding block
+  ├── knowledge/_index.md  ← Knowledge index (+ inherited parent knowledge if extends is set)
   ├── examples/_index.md   ← Examples index (file list + one-line descriptions + uses references)
-  └── memory/_index.md     ← Dynamic memory index (auto-captured user preferences and key info)
+  ├── memory/_index.md     ← Dynamic memory hot layer (last 50 entries, TTL-filtered)
+  └── _global/memory/_index.md  ← Global user memory (shared across all Engrams)
 
 Layer 2: Loaded on demand (LLM reads index summaries, then proactively calls)
-  └── read_engram_file(name, path)  ← Read any knowledge, example, or memory file
+  └── read_engram_file(name, path)  ← Read any file, including memory/_index_full.md for full history
 
 Layer 3: Written during conversation (LLM captures important info proactively)
-  └── capture_memory(name, content, category, summary)  ← Capture user preferences, key decisions, etc.
+  └── capture_memory(name, content, category, summary, expires, is_global)
 ```
 
 The skeleton stays loaded at all times. Knowledge is controlled via "index with inline summaries + full text on demand." No matter how large an Engram gets, the injected content per turn stays manageable.
@@ -179,8 +185,14 @@ Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude 
 
 ```text
 You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
-When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
-Users can also specify an expert directly with @expert-name.
+- When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
+- When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
+- For time-sensitive memories ("user is currently studying for an exam", "user is injured"), add an expires param, e.g. expires="2026-06-01".
+- If load_engram returns a "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
+- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary) to save it.
+- After load_engram, if any memory category exceeds 30 entries, proactively call consolidate_memory to compress.
+- Users can also specify an expert directly with @expert-name.
+- When you call any MCP tool, tell the user which MCP and which expert you used.
 ```
 
 ### 4. Restart Your AI Client and Start Using
@@ -564,11 +576,14 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 
 ```text
 You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
-When a user's question matches an expert, call load_engram(name, query) to load its base layer and indexes.
-Check the knowledge index summaries; when you need details, call read_engram_file(name, path) to read full knowledge or examples.
-When you identify important user preferences or key information during conversation, call capture_memory(name, content, category, summary, memory_type, tags) to save it.
-memory_type options: preference | fact | decision | history | general
-Users can also specify an expert directly with @expert-name.
+- When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
+- When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
+- For time-sensitive memories ("user is currently studying for an exam", "user is injured"), add an expires param, e.g. expires="2026-06-01".
+- If load_engram returns a "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
+- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary) to save it.
+- After load_engram, if any memory category exceeds 30 entries, proactively call consolidate_memory to compress.
+- Users can also specify an expert directly with @expert-name.
+- When you call any MCP tool, tell the user which MCP and which expert you used.
 ```
 
 ### Method B: MCP Prompt

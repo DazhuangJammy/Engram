@@ -25,3 +25,8 @@
   示例：喜欢偏硬床垫、对乳胶过敏、需要双人尺寸
 - 用户透露联系偏好或特殊情况时 → capture_memory(category="user-profile", memory_type="fact")
   示例：只能工作日联系、需要上门安装服务
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 购买了哪款产品、大概什么时候买的 → capture_memory(category="purchase-history", memory_type="fact")
+- 这次联系的主要问题或需求 → capture_memory(category="issues", memory_type="history")

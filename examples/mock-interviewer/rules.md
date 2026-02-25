@@ -21,3 +21,10 @@
   示例：3年Java经验、做过电商系统、没有大厂经历
 - 用户对面试风格给出反馈时 → capture_memory(category="preferences", memory_type="preference")
   示例：希望多追问、不想要提示、想多练系统设计
+
+## Onboarding
+首次对话时，自然地了解以下信息并记录：
+- 目标公司和岗位方向 → capture_memory(category="target", memory_type="fact")
+- 主要技术栈和工作年限 → capture_memory(category="user-profile", memory_type="fact")
+- 自认为最薄弱的面试环节 → capture_memory(category="weak-areas", memory_type="inferred")
+- 面试时间线（几周后面试）→ capture_memory(category="target", memory_type="fact", expires="按实际日期填写")
