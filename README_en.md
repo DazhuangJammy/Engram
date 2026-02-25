@@ -536,6 +536,38 @@ The server exposes `engram-system-prompt`. Clients that support MCP Prompts can 
 
 The tool descriptions for `list_engrams` / `load_engram` / `read_engram_file` already include usage flow guidance. Some AI clients will trigger automatically without extra configuration.
 
+## Adjusting the Consolidation Threshold
+
+When the total memory entries in `_index.md` reach the threshold, `load_engram` hints the AI to consolidate. The default is **30 entries**, configurable at:
+
+File: `src/engram_server/loader.py`, line 112
+
+```python
+if entry_count >= 30 else ""   # change 30 to your preferred number
+```
+
+Suggested values:
+- `20`: Frequent conversations, prefer lean memory
+- `30`: Default, suits most use cases (~10-15 conversations per consolidation hint)
+- `50`: Light usage, less frequent consolidation
+
+> This is only a hint — the AI won't consolidate automatically. It needs to call `consolidate_memory` explicitly.
+
+---
+
+## Updating the Project
+
+The project runs via `uv run --directory` — **no reinstall needed**, just pull the latest code:
+
+```bash
+cd ~/engram-mcp-server   # replace with your actual clone path
+git pull
+```
+
+After pulling, **restart your AI client** (Claude Desktop / Claude Code / etc.) to reload the MCP server.
+
+> Your Engram data lives in `~/.engram/`, completely separate from the project code. Updating won't affect your existing data.
+
 ## Testing
 
 ```bash

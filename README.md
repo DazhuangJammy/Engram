@@ -553,6 +553,38 @@ memory_type 可选：preference（偏好）/ fact（事实）/ decision（决定
 
 `list_engrams` / `load_engram` / `read_engram_file` 的工具描述已包含调用流程引导，部分 AI 客户端无需额外配置即可自动触发。
 
+## 调整压缩触发阈值
+
+当 `_index.md` 中的记忆条目总数达到阈值时，`load_engram` 会提示 AI 进行压缩。默认阈值是 **30 条**，可在以下位置修改：
+
+文件：`src/engram_server/loader.py`，第 112 行
+
+```python
+if entry_count >= 30 else ""   # 把 30 改成你想要的数字
+```
+
+建议范围：
+- `20`：对话频繁，希望记忆保持精简
+- `30`：默认，适合大多数场景（约 10-15 次对话触发一次提示）
+- `50`：轻度使用，不想频繁压缩
+
+> 这只是一个提示，AI 不会自动压缩，需要主动调用 `consolidate_memory`。
+
+---
+
+## 更新项目
+
+项目通过 `uv run --directory` 运行，**不需要重新安装**，只需拉取最新代码：
+
+```bash
+cd ~/engram-mcp-server   # 替换为你的实际克隆路径
+git pull
+```
+
+拉取后**重启 AI 客户端**（Claude Desktop / Claude Code 等），MCP server 会自动加载新版本。
+
+> 你的 Engram 数据存放在 `~/.engram/` 目录，与项目代码完全分离，更新代码不会影响已有数据。
+
 ## 测试
 
 ```bash
