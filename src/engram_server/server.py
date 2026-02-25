@@ -367,6 +367,81 @@ Args:
             return f"记忆压缩失败: {category}"
         return f"已压缩: [{category}] 原始条目已归档至 memory/{category}-archive.md"
 
+    @app.tool()
+    def delete_memory(name: str, category: str, summary: str) -> str:
+        """Delete a specific memory entry by its summary.
+
+Use this when the user wants to remove an incorrect or outdated memory.
+First read memory/_index.md to find the exact summary text, then call this tool.
+The entry is removed from both the index and the category file."""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        ok = loader.delete_memory(name, category, summary)
+        if not ok:
+            return f"未找到匹配的记忆条目: [{category}] {summary}"
+        return f"已删除: [{category}] {summary}"
+
+    @app.tool()
+    def correct_memory(
+        name: str,
+        category: str,
+        old_summary: str,
+        new_content: str,
+        new_summary: str,
+        memory_type: str = "general",
+        tags: list[str] | None = None,
+    ) -> str:
+        """Correct an existing memory entry with updated content.
+
+Use this when the user says a captured memory is wrong or outdated.
+First read memory/_index.md to find the exact old_summary, then call this
+with the corrected content and a new summary.
+
+Args:
+    name: Engram pack name
+    category: Memory category (e.g. "user-profile", "preferences")
+    old_summary: Exact summary text from the index to identify the entry
+    new_content: The corrected memory content
+    new_summary: Updated one-line summary for the index
+    memory_type: Semantic type — "preference" | "fact" | "decision" | "history" | "general"
+    tags: Optional updated tags"""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        ok = loader.correct_memory(
+            name, category, old_summary, new_content, new_summary,
+            memory_type=memory_type,
+            tags=tags,
+        )
+        if not ok:
+            return f"未找到匹配的记忆条目: [{category}] {old_summary}"
+        type_label = f"[{memory_type}] " if memory_type != "general" else ""
+        return f"已修正: {type_label}[{category}] {new_summary}"
+
+    @app.tool()
+    def add_knowledge(
+        name: str, filename: str, content: str, summary: str
+    ) -> str:
+        """Add a new knowledge file to an Engram and update the knowledge index.
+
+Use this when the user wants to expand an Engram's knowledge base during conversation.
+The file is written to knowledge/{filename}.md and the index is updated automatically.
+
+Args:
+    name: Engram pack name
+    filename: Short descriptive filename (with or without .md extension)
+    content: Full markdown content for the knowledge file
+    summary: One-line description for the knowledge index"""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        ok = loader.add_knowledge(name, filename, content, summary)
+        if not ok:
+            return f"写入失败: knowledge/{filename}"
+        fn = filename if filename.endswith(".md") else f"{filename}.md"
+        return f"已添加知识: knowledge/{fn} — {summary}"
+
     return app
 
 

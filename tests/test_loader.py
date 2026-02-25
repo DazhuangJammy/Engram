@@ -293,3 +293,97 @@ def test_count_memory_entries(tmp_path: Path) -> None:
     assert base is not None
     assert "## 动态记忆" in base
     assert "偏好晨练" in base
+
+
+def test_delete_memory_removes_entry_and_index(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    loader.capture_memory("test-expert", "用户左膝旧伤", "user-profile", "膝关节受限", memory_type="fact")
+
+    ok = loader.delete_memory("test-expert", "user-profile", "膝关节受限")
+    assert ok is True
+
+    index_text = (tmp_path / "test-expert" / "memory" / "_index.md").read_text()
+    assert "膝关节受限" not in index_text
+
+    cat_text = (tmp_path / "test-expert" / "memory" / "user-profile.md").read_text()
+    assert "用户左膝旧伤" not in cat_text
+
+
+def test_delete_memory_returns_false_for_missing_summary(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    loader.capture_memory("test-expert", "内容", "user-profile", "真实摘要")
+
+    ok = loader.delete_memory("test-expert", "user-profile", "不存在的摘要")
+    assert ok is False
+
+
+def test_correct_memory_updates_content_and_index(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    loader.capture_memory(
+        "test-expert", "用户体重80kg", "user-profile", "体重80kg", memory_type="fact"
+    )
+
+    ok = loader.correct_memory(
+        "test-expert",
+        "user-profile",
+        "体重80kg",
+        "用户体重75kg（已减重）",
+        "体重75kg",
+        memory_type="fact",
+    )
+    assert ok is True
+
+    index_text = (tmp_path / "test-expert" / "memory" / "_index.md").read_text()
+    assert "体重75kg" in index_text
+    assert "体重80kg" not in index_text
+
+    cat_text = (tmp_path / "test-expert" / "memory" / "user-profile.md").read_text()
+    assert "用户体重75kg" in cat_text
+    assert "用户体重80kg" not in cat_text
+
+
+def test_correct_memory_returns_false_for_missing_summary(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    loader.capture_memory("test-expert", "内容", "user-profile", "真实摘要")
+
+    ok = loader.correct_memory(
+        "test-expert", "user-profile", "不存在的摘要", "新内容", "新摘要"
+    )
+    assert ok is False
+
+
+def test_add_knowledge_creates_file_and_updates_index(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    (tmp_path / "test-expert" / "knowledge").mkdir()
+    (tmp_path / "test-expert" / "knowledge" / "_index.md").write_text(
+        "- `knowledge/existing.md` - 已有知识\n", encoding="utf-8"
+    )
+
+    ok = loader.add_knowledge(
+        "test-expert",
+        "new-topic",
+        "# 新知识\n\n这是新增的知识内容。",
+        "新增主题的核心要点",
+    )
+    assert ok is True
+
+    knowledge_file = tmp_path / "test-expert" / "knowledge" / "new-topic.md"
+    assert knowledge_file.is_file()
+    assert "新增的知识内容" in knowledge_file.read_text()
+
+    index_text = (tmp_path / "test-expert" / "knowledge" / "_index.md").read_text()
+    assert "knowledge/new-topic.md" in index_text
+    assert "新增主题的核心要点" in index_text
+    assert "已有知识" in index_text  # existing entry preserved
+
+
+def test_add_knowledge_auto_adds_md_extension(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    (tmp_path / "test-expert" / "knowledge").mkdir()
+    (tmp_path / "test-expert" / "knowledge" / "_index.md").write_text("", encoding="utf-8")
+
+    loader.add_knowledge("test-expert", "topic-no-ext", "内容", "摘要")
+
+    assert (tmp_path / "test-expert" / "knowledge" / "topic-no-ext.md").is_file()

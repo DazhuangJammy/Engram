@@ -35,7 +35,7 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 ## Features
 
 - Zero vector dependencies: no chromadb / litellm, only depends on `mcp`
-- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `install_engram`
+- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `delete_memory`, `correct_memory`, `add_knowledge`, `install_engram`
 - Index-driven loading:
   - `load_engram` returns role/workflow/rules + knowledge index (with inline summaries) + examples index (with uses) + dynamic memory index
   - `read_engram_file` reads full knowledge or example files on demand
@@ -229,6 +229,9 @@ engram-server init my-expert --packs-dir ~/.engram
 | `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | Capture user preferences and key info during conversation, auto-stored in memory/ with type labels, tags, and conversation scope |
 | `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | Compress raw memory entries into a dense summary, archiving originals to `{category}-archive.md` |
+| `delete_memory` | `name`, `category`, `summary` | Delete a specific memory entry by summary, removing it from both the index and category file |
+| `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | Correct an existing memory entry, updating both the index and category file |
+| `add_knowledge` | `name`, `filename`, `content`, `summary` | Add a new knowledge file to an Engram and update the knowledge index automatically |
 | `install_engram` | `source` | Install Engram pack from git URL |
 
 ### `load_engram` Response Format
@@ -301,6 +304,46 @@ Call consolidate_memory → originals archived, summary replaces them
 
 After consolidation, `_index.md` holds a single `[consolidated]` entry — context injection stays manageable forever.
 Originals are archived to `memory/{category}-archive.md`, still readable via `read_engram_file`.
+
+### Memory Deletion (delete_memory)
+
+Use this when the user explicitly says a memory is wrong or outdated. Read the index first to get the exact summary text, then call delete:
+
+```
+User: "I don't live in Beijing anymore, please remove that record"
+  → AI calls read_engram_file("name", "memory/_index.md") to find the entry
+  → Confirms summary text → calls delete_memory("name", "user-profile", "Lives in Beijing")
+  → Entry removed from both the index and the category file
+```
+
+> The `summary` parameter must exactly match the text in the index — read the index before calling.
+
+### Memory Correction (correct_memory)
+
+Use this when the user says a captured memory is inaccurate. The original timestamp is preserved; only content and summary are updated:
+
+```
+User: "I'm not 80kg anymore, I'm 75kg now"
+  → AI reads memory/_index.md, finds summary "Weight 80kg"
+  → calls correct_memory("name", "user-profile", "Weight 80kg",
+      "User weight 75kg (lost weight)", "Weight 75kg", memory_type="fact")
+  → Entry content and index updated in sync, timestamp preserved
+```
+
+`memory_type` and `tags` can be updated at the same time — no separate operation needed.
+
+### Dynamic Knowledge Expansion (add_knowledge)
+
+Use this when a new knowledge topic comes up during conversation. Suited for occasional additions, not bulk imports:
+
+```
+User: "Please save the running technique tips we just discussed to the knowledge base"
+  → AI organizes the content
+  → calls add_knowledge("name", "running-technique", "# Running Technique\n\nLanding...", "Landing form and cadence optimization")
+  → New file written to knowledge/running-technique.md, knowledge/_index.md updated automatically
+```
+
+> When the knowledge index exceeds 15 entries, consider manually organizing `_index.md` with `###` group headings to help the model navigate quickly.
 
 
 
@@ -608,6 +651,12 @@ pytest -q
 - `load_engram` auto-hints consolidation when memory entries ≥ 10
 - Per-type consolidation strategy (fact: keep forever / preference: merge / history: archive periodically)
 - Example Engrams now include `preferences-archive.md` showing archive format
+
+### Completed (v0.5.0)
+
+- `delete_memory` tool: delete a specific memory entry by summary, removing it from both the index and category file
+- `correct_memory` tool: correct an existing memory entry, updating content, type, and tags in both the index and category file
+- `add_knowledge` tool: dynamically add new knowledge files to an Engram during conversation, with automatic index update
 
 ### Planned
 

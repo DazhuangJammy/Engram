@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -270,6 +271,171 @@ class EngramLoader:
                 index_file.write_text(new_line, encoding="utf-8")
             except OSError:
                 return False
+
+        return True
+
+    def delete_memory(self, name: str, category: str, summary: str) -> bool:
+        """Delete a specific memory entry by matching its summary in the index.
+
+        Removes the matching line from _index.md and the corresponding entry
+        from memory/{category}.md (matched by timestamp).
+        """
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return False
+
+        memory_dir = engram_dir / "memory"
+        index_file = memory_dir / "_index.md"
+        category_file = memory_dir / f"{category}.md"
+
+        if not index_file.is_file():
+            return False
+
+        try:
+            index_lines = index_file.read_text(encoding="utf-8").splitlines(keepends=True)
+        except OSError:
+            return False
+
+        target_line = None
+        target_ts = None
+        for line in index_lines:
+            if f"`memory/{category}.md`" in line and summary.strip() in line:
+                target_line = line
+                m = re.search(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]", line)
+                if m:
+                    target_ts = m.group(1)
+                break
+
+        if target_line is None:
+            return False
+
+        new_lines = [l for l in index_lines if l != target_line]
+        try:
+            index_file.write_text("".join(new_lines), encoding="utf-8")
+        except OSError:
+            return False
+
+        if target_ts and category_file.is_file():
+            try:
+                content = category_file.read_text(encoding="utf-8")
+                parts = content.split("\n---\n")
+                new_parts = [p for p in parts if target_ts not in p]
+                category_file.write_text("\n---\n".join(new_parts), encoding="utf-8")
+            except OSError:
+                pass  # index already updated; best-effort on category file
+
+        return True
+
+    def correct_memory(
+        self,
+        name: str,
+        category: str,
+        old_summary: str,
+        new_content: str,
+        new_summary: str,
+        *,
+        memory_type: str = "general",
+        tags: list[str] | None = None,
+    ) -> bool:
+        """Replace an existing memory entry with corrected content.
+
+        Finds the entry by old_summary in _index.md, updates the index line
+        and replaces the raw content in memory/{category}.md.
+        """
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return False
+
+        memory_dir = engram_dir / "memory"
+        index_file = memory_dir / "_index.md"
+        category_file = memory_dir / f"{category}.md"
+
+        if not index_file.is_file():
+            return False
+
+        try:
+            index_lines = index_file.read_text(encoding="utf-8").splitlines(keepends=True)
+        except OSError:
+            return False
+
+        target_line = None
+        target_ts = None
+        for line in index_lines:
+            if f"`memory/{category}.md`" in line and old_summary.strip() in line:
+                target_line = line
+                m = re.search(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]", line)
+                if m:
+                    target_ts = m.group(1)
+                break
+
+        if target_line is None:
+            return False
+
+        ts = target_ts or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        tag_str = f" [{','.join(tags)}]" if tags else ""
+        new_index_line = (
+            f"- `memory/{category}.md` [{ts}] [{memory_type}]{tag_str} {new_summary.strip()}\n"
+        )
+        new_index_lines = [
+            new_index_line if l == target_line else l for l in index_lines
+        ]
+        try:
+            index_file.write_text("".join(new_index_lines), encoding="utf-8")
+        except OSError:
+            return False
+
+        if target_ts and category_file.is_file():
+            try:
+                content = category_file.read_text(encoding="utf-8")
+                parts = content.split("\n---\n")
+                new_parts = []
+                for part in parts:
+                    if target_ts in part:
+                        meta_parts = [f"[{ts}]", f"type:{memory_type}"]
+                        if tags:
+                            meta_parts.append(f"tags:{','.join(tags)}")
+                        meta_line = " ".join(meta_parts)
+                        new_parts.append(f"\n{meta_line}\n{new_content.strip()}\n")
+                    else:
+                        new_parts.append(part)
+                category_file.write_text("\n---\n".join(new_parts), encoding="utf-8")
+            except OSError:
+                pass  # index already updated; best-effort on category file
+
+        return True
+
+    def add_knowledge(
+        self, name: str, filename: str, content: str, summary: str
+    ) -> bool:
+        """Add a new knowledge file and append an entry to knowledge/_index.md.
+
+        filename may omit the .md extension — it will be added automatically.
+        """
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return False
+
+        if not filename.endswith(".md"):
+            filename = f"{filename}.md"
+
+        knowledge_path = f"knowledge/{filename}"
+        target = self._resolve_file(name, knowledge_path)
+        if target is None:
+            return False
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_text(content, encoding="utf-8")
+        except OSError:
+            return False
+
+        index_file = engram_dir / "knowledge" / "_index.md"
+        index_line = f"- `{knowledge_path}` - {summary.strip()}\n"
+        try:
+            with index_file.open("a", encoding="utf-8") as f:
+                f.write(index_line)
+        except OSError:
+            return False
 
         return True
 

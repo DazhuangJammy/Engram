@@ -37,7 +37,7 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 ## 功能特性
 
 - 零向量依赖：不使用 chromadb / litellm，只依赖 `mcp`
-- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`install_engram`
+- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`delete_memory`、`correct_memory`、`add_knowledge`、`install_engram`
 - 索引驱动加载：
   - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引
   - `read_engram_file` 按路径按需读取知识或案例全文
@@ -231,6 +231,9 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | 对话中捕获用户偏好和关键信息，自动写入 memory/，支持类型标注、标签和对话作用域 |
 | `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | 将某个 category 的原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md` |
+| `delete_memory` | `name`, `category`, `summary` | 按摘要精确删除一条记忆，同时从索引和分类文件中移除 |
+| `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | 修正一条已有记忆的内容，更新索引和分类文件 |
+| `add_knowledge` | `name`, `filename`, `content`, `summary` | 向 Engram 添加新知识文件并自动更新知识索引 |
 | `install_engram` | `source` | 从 git URL 安装 Engram 包 |
 
 ### `load_engram` 返回内容格式
@@ -303,6 +306,46 @@ AI 写出去重压缩的密集摘要
 
 压缩后 `_index.md` 只保留一条 `[consolidated]` 条目，context 注入量永远可控。
 原始条目归档至 `memory/{category}-archive.md`，仍可通过 `read_engram_file` 查阅。
+
+### 记忆删除（delete_memory）
+
+当用户明确说某条记忆有误或已过时时使用。AI 先读取索引找到精确摘要，再调用删除：
+
+```
+用户："我已经不住北京了，帮我删掉那条记录"
+  → AI 调用 read_engram_file("name", "memory/_index.md") 找到对应条目
+  → 确认摘要文本 → 调用 delete_memory("name", "user-profile", "居住在北京")
+  → 条目从索引和分类文件中同时移除
+```
+
+> `summary` 参数需与索引中的摘要文本完全匹配，建议先读索引再调用。
+
+### 记忆修正（correct_memory）
+
+当用户说某条记忆内容不准确时使用。原时间戳保留，只更新内容和摘要：
+
+```
+用户："我体重不是80kg了，现在75kg"
+  → AI 读取 memory/_index.md，找到摘要"体重80kg"
+  → 调用 correct_memory("name", "user-profile", "体重80kg",
+      "用户体重75kg（已减重）", "体重75kg", memory_type="fact")
+  → 原条目内容和索引同步更新，时间戳保留
+```
+
+`memory_type` 和 `tags` 可在修正时一并更新，无需单独操作。
+
+### 动态知识扩充（add_knowledge）
+
+对话中发现需要补充新知识主题时使用。适合"偶尔补充一个新主题"，不适合批量导入：
+
+```
+用户："帮我把刚才讨论的跑步技术要点记录到知识库里"
+  → AI 整理内容
+  → 调用 add_knowledge("name", "跑步技术", "# 跑步技术\n\n落地方式...", "落地方式与步频优化要点")
+  → 新文件写入 knowledge/跑步技术.md，knowledge/_index.md 自动追加一行
+```
+
+> 知识索引条目超过 15 个时，建议手动整理 `_index.md` 的 `###` 分组结构，帮助模型快速定位。
 
 
 
@@ -625,6 +668,12 @@ pytest -q
 - `load_engram` 当记忆条目 ≥ 10 条时自动提示压缩
 - 按记忆类型分层压缩策略（fact 永久保留 / preference 合并 / history 定期归档）
 - 示例 Engram 新增 `preferences-archive.md` 展示归档格式
+
+### 已完成（v0.5.0）
+
+- `delete_memory` 工具：按摘要精确删除一条记忆，同时从索引和分类文件中移除
+- `correct_memory` 工具：修正已有记忆内容，更新索引和分类文件，支持重新指定类型和标签
+- `add_knowledge` 工具：对话中动态向 Engram 添加新知识文件，自动更新知识索引
 
 ### 计划中
 
