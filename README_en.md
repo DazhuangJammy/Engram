@@ -35,7 +35,7 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 ## Features
 
 - Zero vector dependencies: no chromadb / litellm, only depends on `mcp`
-- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `install_engram`
+- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `install_engram`
 - Index-driven loading:
   - `load_engram` returns role/workflow/rules + knowledge index (with inline summaries) + examples index (with uses) + dynamic memory index
   - `read_engram_file` reads full knowledge or example files on demand
@@ -228,6 +228,7 @@ engram-server init my-expert --packs-dir ~/.engram
 | `read_engram_file` | `name`, `path` | Read a single file on demand (with path traversal protection) |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | Capture user preferences and key info during conversation, auto-stored in memory/ with type labels, tags, and conversation scope |
+| `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | Compress raw memory entries into a dense summary, archiving originals to `{category}-archive.md` |
 | `install_engram` | `source` | Install Engram pack from git URL |
 
 ### `load_engram` Response Format
@@ -273,9 +274,33 @@ engram-server init my-expert --packs-dir ~/.engram
 
 `conversation_id` is optional — binds a memory to a specific conversation for future scoped retrieval.
 
-### Throttle Protection
+### Memory Consolidation (consolidate_memory)
 
-Same Engram + same category + same content captured within 30 seconds is silently skipped (returns success) to prevent duplicate writes.
+As conversations accumulate, raw entries in a category keep growing. `consolidate_memory` solves this:
+
+```
+Raw entries keep appending (append-only)
+         ↓
+A category exceeds 10 entries
+         ↓
+AI calls read_engram_file to read raw content
+         ↓
+AI writes a dense, deduplicated summary
+         ↓
+Call consolidate_memory → originals archived, summary replaces them
+```
+
+**Different memory types, different consolidation strategies:**
+
+| Type | Characteristic | Strategy |
+|------|---------------|----------|
+| `fact` | Stable, rarely changes | Keep permanently, no consolidation needed |
+| `preference` | Semi-stable, occasionally updated | Merge and compress, always loaded |
+| `decision` | Time-sensitive | Keep recent, compress old |
+| `history` | Newer = more relevant | Consolidate periodically, archive old |
+
+After consolidation, `_index.md` holds a single `[consolidated]` entry — context injection stays manageable forever.
+Originals are archived to `memory/{category}-archive.md`, still readable via `read_engram_file`.
 
 
 
@@ -543,6 +568,14 @@ pytest -q
 - Throttle protection: duplicate content within 30 seconds is silently skipped
 - `load_engram` wraps dynamic memory in `<memory>` tags for clear AI distinction from knowledge
 - Memory index format upgraded: includes type labels and tag info
+
+### Completed (v0.4.0)
+
+- `consolidate_memory` tool: compress raw entries into a dense summary, archive originals to `{category}-archive.md`
+- `_index.md` holds a single `[consolidated]` entry after compression — context stays manageable
+- `load_engram` auto-hints consolidation when memory entries ≥ 10
+- Per-type consolidation strategy (fact: keep forever / preference: merge / history: archive periodically)
+- Example Engrams now include `preferences-archive.md` showing archive format
 
 ### Planned
 

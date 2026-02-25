@@ -37,7 +37,7 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 ## 功能特性
 
 - 零向量依赖：不使用 chromadb / litellm，只依赖 `mcp`
-- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`install_engram`
+- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`install_engram`
 - 索引驱动加载：
   - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引
   - `read_engram_file` 按路径按需读取知识或案例全文
@@ -230,6 +230,7 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 | `read_engram_file` | `name`, `path` | 按需读取单个文件（含路径越界保护） |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id` | 对话中捕获用户偏好和关键信息，自动写入 memory/，支持类型标注、标签和对话作用域 |
+| `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | 将某个 category 的原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md` |
 | `install_engram` | `source` | 从 git URL 安装 Engram 包 |
 
 ### `load_engram` 返回内容格式
@@ -275,9 +276,33 @@ engram-server init my-expert --packs-dir ~/.claude/engram
 
 `conversation_id` 可选，用于将记忆绑定到特定对话，便于未来按对话维度检索。
 
-### 节流保护
+### 记忆压缩（consolidate_memory）
 
-同一 Engram + 同一 category + 相同内容，30 秒内重复调用会被静默跳过（返回成功），避免重复写入。
+随着对话积累，某个 category 的原始条目会越来越多。`consolidate_memory` 解决这个问题：
+
+```
+原始条目不断追加（append-only）
+         ↓
+某个 category 超过 10 条时
+         ↓
+AI 调用 read_engram_file 读取原始内容
+         ↓
+AI 写出去重压缩的密集摘要
+         ↓
+调用 consolidate_memory → 原始条目归档，摘要替换
+```
+
+**不同类型的记忆，压缩策略不同：**
+
+| 类型 | 特征 | 策略 |
+|------|------|------|
+| `fact` | 稳定，几乎不变 | 永久保留，无需压缩 |
+| `preference` | 半稳定，偶尔更新 | 合并压缩，始终加载 |
+| `decision` | 有时效性 | 保留近期，压缩旧的 |
+| `history` | 越新越相关 | 定期压缩，归档旧的 |
+
+压缩后 `_index.md` 只保留一条 `[consolidated]` 条目，context 注入量永远可控。
+原始条目归档至 `memory/{category}-archive.md`，仍可通过 `read_engram_file` 查阅。
 
 
 
@@ -560,6 +585,14 @@ pytest -q
 - 节流保护：30 秒内相同内容重复捕获自动跳过
 - `load_engram` 动态记忆区块用 `<memory>` 标签包裹，AI 可清晰区分记忆与知识
 - 记忆索引格式升级：含类型标注和标签信息
+
+### 已完成（v0.4.0）
+
+- `consolidate_memory` 工具：将原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md`
+- `_index.md` 压缩后只保留一条 `[consolidated]` 条目，context 注入量永远可控
+- `load_engram` 当记忆条目 ≥ 10 条时自动提示压缩
+- 按记忆类型分层压缩策略（fact 永久保留 / preference 合并 / history 定期归档）
+- 示例 Engram 新增 `preferences-archive.md` 展示归档格式
 
 ### 计划中
 

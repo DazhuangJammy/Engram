@@ -190,6 +190,9 @@ def _build_engram_system_prompt(engrams: list[dict]) -> str:
         "   memory_type 可选：preference / fact / decision / history / general\n"
         "   tags 可选：用于分类过滤，如 [\"fitness\", \"injury\"]\n"
         "7. 下次加载同一专家时，动态记忆会自动带入，无需用户重复说明\n"
+        "8. 当某个 category 的记忆条目超过 10 条时，先用 read_engram_file 读取原始内容，\n"
+        "   再调用 consolidate_memory(name, category, consolidated_content, summary)\n"
+        "   将多条原始记录压缩为一条密集摘要，原始条目自动归档\n"
     )
 
 
@@ -333,6 +336,36 @@ Args:
             return f"记忆捕获失败: {category}"
         type_label = f"[{memory_type}] " if memory_type != "general" else ""
         return f"已记录: {type_label}[{category}] {summary}"
+
+    @app.tool()
+    def consolidate_memory(
+        name: str,
+        category: str,
+        consolidated_content: str,
+        summary: str,
+    ) -> str:
+        """Consolidate raw memory entries into a dense summary, archiving originals.
+
+Call this when a memory category has accumulated many entries (10+).
+Workflow:
+  1. Call read_engram_file(name, "memory/{category}.md") to read all raw entries
+  2. Write a dense, deduplicated summary as consolidated_content
+  3. Call this tool — originals are archived to memory/{category}-archive.md
+
+The _index.md is updated to a single consolidated entry for this category.
+
+Args:
+    name: Engram pack name
+    category: Memory category to consolidate (e.g. "preferences", "user-profile")
+    consolidated_content: Dense summary replacing all raw entries
+    summary: One-line summary for the memory index"""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        ok = loader.consolidate_memory(name, category, consolidated_content, summary)
+        if not ok:
+            return f"记忆压缩失败: {category}"
+        return f"已压缩: [{category}] 原始条目已归档至 memory/{category}-archive.md"
 
     return app
 

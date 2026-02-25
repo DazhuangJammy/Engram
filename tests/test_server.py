@@ -232,6 +232,43 @@ async def test_capture_memory_and_load(tmp_path: Path) -> None:
     assert "<memory>" in loaded
 
 
+@pytest.mark.asyncio
+async def test_consolidate_memory(tmp_path: Path) -> None:
+    """consolidate_memory archives raw entries and updates index."""
+    _setup_tmp_engram(tmp_path, "test-expert")
+    session = await _open_session(tmp_path)
+    try:
+        # Capture two raw entries
+        await session.call_tool("capture_memory", {
+            "name": "test-expert", "content": "偏好晨练",
+            "category": "preferences", "summary": "喜欢早上训练",
+            "memory_type": "preference",
+        })
+        await session.call_tool("capture_memory", {
+            "name": "test-expert", "content": "家有哑铃",
+            "category": "preferences", "summary": "居家训练设备",
+            "memory_type": "preference",
+        })
+        # Consolidate
+        result = _result_text(await session.call_tool("consolidate_memory", {
+            "name": "test-expert",
+            "category": "preferences",
+            "consolidated_content": "【训练时间】偏好晨练。【设备】家有哑铃。",
+            "summary": "训练偏好摘要",
+        }))
+        # Load and verify index shows consolidated entry
+        loaded = _result_text(await session.call_tool(
+            "load_engram", {"name": "test-expert", "query": "训练偏好"}
+        ))
+    finally:
+        await _close_session(session)
+
+    assert "已压缩" in result
+    assert "preferences-archive.md" in result
+    assert "[consolidated]" in loaded
+    assert "训练偏好摘要" in loaded
+
+
 def _setup_tmp_engram(tmp_path: Path, name: str) -> None:
     """Create a minimal engram in tmp_path for MCP tests."""
     d = tmp_path / name

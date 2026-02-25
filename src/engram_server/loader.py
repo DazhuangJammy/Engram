@@ -102,8 +102,17 @@ class EngramLoader:
 
         memory_index = self.load_file(name, "memory/_index.md")
         if memory_index and memory_index.strip():
+            entry_count = sum(
+                1 for l in memory_index.splitlines()
+                if l.strip().startswith("- `memory/")
+            )
+            hint = (
+                f"\n💡 当前共 {entry_count} 条记忆，建议对条目较多的 category"
+                " 调用 consolidate_memory 压缩。"
+                if entry_count >= 10 else ""
+            )
             sections.append(
-                f"## 动态记忆\n<memory>\n{memory_index.strip()}\n</memory>"
+                f"## 动态记忆\n<memory>\n{memory_index.strip()}\n</memory>{hint}"
             )
 
         if not sections:
@@ -198,6 +207,78 @@ class EngramLoader:
             return False
 
         return True
+
+    def consolidate_memory(
+        self,
+        name: str,
+        category: str,
+        consolidated_content: str,
+        summary: str,
+    ) -> bool:
+        """Replace raw memory entries with a consolidated summary, archiving originals.
+
+        Steps:
+        1. Append existing category file to {category}-archive.md
+        2. Overwrite category file with the consolidated content
+        3. Rewrite _index.md: remove all lines for this category, add one consolidated line
+        """
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return False
+
+        memory_dir = engram_dir / "memory"
+        category_file = memory_dir / f"{category}.md"
+        archive_file = memory_dir / f"{category}-archive.md"
+        index_file = memory_dir / "_index.md"
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+        # 1. Archive existing raw entries
+        if category_file.is_file():
+            try:
+                existing = category_file.read_text(encoding="utf-8")
+                with archive_file.open("a", encoding="utf-8") as f:
+                    f.write(f"\n\n# 归档于 {ts}\n{existing}")
+            except OSError:
+                return False
+
+        # 2. Write consolidated content
+        try:
+            category_file.write_text(
+                f"\n---\n[{ts}] type:consolidated\n{consolidated_content.strip()}\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            return False
+
+        # 3. Update _index.md
+        new_line = f"- `memory/{category}.md` [{ts}] [consolidated] {summary.strip()}\n"
+        if index_file.is_file():
+            try:
+                lines = index_file.read_text(encoding="utf-8").splitlines(keepends=True)
+            except OSError:
+                return False
+            filtered = [l for l in lines if f"`memory/{category}.md`" not in l]
+            filtered.append(new_line)
+            try:
+                index_file.write_text("".join(filtered), encoding="utf-8")
+            except OSError:
+                return False
+        else:
+            try:
+                memory_dir.mkdir(parents=True, exist_ok=True)
+                index_file.write_text(new_line, encoding="utf-8")
+            except OSError:
+                return False
+
+        return True
+
+    def count_memory_entries(self, name: str, category: str) -> int:
+        """Count raw (non-consolidated) entries in a memory category file."""
+        content = self.load_file(name, f"memory/{category}.md")
+        if not content:
+            return 0
+        return content.count("\n---\n")
 
     def _render_section(self, name: str, title: str, subdir: str) -> str:
         filename = _BASE_SECTIONS.get(subdir, f"{subdir}.md")

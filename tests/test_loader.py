@@ -215,8 +215,75 @@ def test_capture_memory_throttle(tmp_path: Path) -> None:
     assert text.count("用户膝盖有旧伤") == 1
 
 
-def test_load_engram_base_includes_memory(tmp_path: Path) -> None:
+def test_consolidate_memory_archives_and_replaces(tmp_path: Path) -> None:
     loader = _make_engram(tmp_path)
+
+    # Add some raw entries first
+    loader.capture_memory("test-expert", "偏好晨练", "preferences", "喜欢早上训练", memory_type="preference")
+    # bypass throttle by using different content
+    loader._throttle_cache.clear()
+    loader.capture_memory("test-expert", "家有哑铃", "preferences", "居家训练设备", memory_type="preference")
+
+    # Consolidate
+    ok = loader.consolidate_memory(
+        "test-expert",
+        "preferences",
+        "【训练时间】偏好晨练。【设备】家有哑铃。",
+        "训练偏好摘要",
+    )
+    assert ok is True
+
+    memory_dir = tmp_path / "test-expert" / "memory"
+
+    # Archive file should exist and contain original entries
+    archive = memory_dir / "preferences-archive.md"
+    assert archive.is_file()
+    archive_text = archive.read_text()
+    assert "偏好晨练" in archive_text
+    assert "家有哑铃" in archive_text
+
+    # Category file should now contain only consolidated content
+    cat_text = (memory_dir / "preferences.md").read_text()
+    assert "type:consolidated" in cat_text
+    assert "【训练时间】" in cat_text
+    assert "type:preference" not in cat_text  # raw entry format gone
+
+    # Index should have exactly one entry for this category
+    index_text = (memory_dir / "_index.md").read_text()
+    assert index_text.count("`memory/preferences.md`") == 1
+    assert "[consolidated]" in index_text
+    assert "训练偏好摘要" in index_text
+
+
+def test_consolidate_memory_multiple_rounds(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    loader.capture_memory("test-expert", "内容A", "history", "摘要A", memory_type="history")
+    loader.consolidate_memory("test-expert", "history", "第一次压缩内容", "第一次压缩")
+    loader._throttle_cache.clear()
+    loader.capture_memory("test-expert", "内容B", "history", "摘要B", memory_type="history")
+    loader.consolidate_memory("test-expert", "history", "第二次压缩内容", "第二次压缩")
+
+    archive = tmp_path / "test-expert" / "memory" / "history-archive.md"
+    archive_text = archive.read_text()
+    # Both rounds should be in archive
+    assert "第一次压缩内容" in archive_text
+    assert "内容B" in archive_text
+
+    index_text = (tmp_path / "test-expert" / "memory" / "_index.md").read_text()
+    assert index_text.count("`memory/history.md`") == 1
+    assert "第二次压缩" in index_text
+
+
+def test_count_memory_entries(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    assert loader.count_memory_entries("test-expert", "preferences") == 0
+    loader.capture_memory("test-expert", "内容1", "preferences", "摘要1")
+    assert loader.count_memory_entries("test-expert", "preferences") == 1
+    loader._throttle_cache.clear()
+    loader.capture_memory("test-expert", "内容2", "preferences", "摘要2")
+    assert loader.count_memory_entries("test-expert", "preferences") == 2
 
     loader.capture_memory(
         "test-expert", "喜欢早上训练", "preferences", "偏好晨练"
