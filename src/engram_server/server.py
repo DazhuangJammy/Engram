@@ -525,6 +525,10 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("name")
     init_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
 
+    stats_parser = subparsers.add_parser("stats", help="Show Engram statistics")
+    stats_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
+    stats_parser.add_argument("--tui", action="store_true", help="Rich TUI output")
+
     return parser
 
 
@@ -561,6 +565,21 @@ def main(argv: list[str] | None = None) -> None:
         print(result["message"])
         if not result["ok"]:
             raise SystemExit(1)
+        return
+
+    if args.command == "stats":
+        from engram_server.stats import gather_stats, render_plain, render_tui
+
+        packs_dir = Path(args.packs_dir)
+        loader = EngramLoader(
+            packs_dir=_build_loader_roots(packs_dir),
+            default_packs_dir=packs_dir,
+        )
+        report = gather_stats(loader)
+        if args.tui:
+            render_tui(report)
+        else:
+            print(render_plain(report))
         return
 
     parser.print_help()

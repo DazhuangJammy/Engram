@@ -45,7 +45,8 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 - Tiered index: `_index.md` keeps last 50 entries (hot layer); full history in `_index_full.md` (cold layer)
 - Engram inheritance: `meta.json` supports `extends` field to merge parent knowledge index
 - Cold-start onboarding: `## Onboarding` block in `rules.md` triggers first-session info collection
-- CLI commands: `serve` / `list` / `install` / `init`
+- CLI commands: `serve` / `list` / `install` / `init` / `stats`
+- Stats dashboard: `engram-server stats` for memory statistics, `--tui` for rich rendering
 
 ## Design Philosophy: Index-Driven Layered Lazy Loading
 
@@ -127,7 +128,7 @@ claude mcp remove --scope user engram-server
 Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex) to let AI automatically discover and use Engrams:
 
 ```text
-You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
+You have an expert memory system available. Call list_engrams() from the engram-server MCP at the start of each conversation to see available experts.
 - When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
 - When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
 - For time-sensitive memories ("user is studying for an exam", "user is injured"), add an expires param (YYYY-MM-DD, e.g. "2026-06-01"). Expired entries are archived and hidden from future loads.
@@ -145,6 +146,7 @@ You have an expert memory system available. Call list_engrams() at the start of 
 - When the user asks about an engram's details, call get_engram_info(name).
 - When the user wants to install a new engram, call install_engram(source) where source is a git URL.
 - To directly edit an engram's role.md / workflow.md / rules.md or other non-knowledge files, call write_engram_file(name, path, content, mode).
+- When the user asks about memory statistics or wants to know how many memories exist, suggest running `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` or `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui` in the terminal.
 ```
 
 ### 4. Restart Your AI Client and Start Using
@@ -181,7 +183,25 @@ Initialize a new Engram template:
 engram-server init my-expert --packs-dir ~/.engram
 ```
 
+View memory statistics (plain text):
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats
+```
+
+View memory statistics (Rich rendering):
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
+```
+
 > If you use a custom `--packs-dir` in MCP config, keep the same directory for all CLI commands here.
+>
+> Tip: the command is long — set an alias for convenience:
+> ```bash
+> alias engram='uvx --from git+https://github.com/DazhuangJammy/Engram engram-server'
+> # Then just use: engram stats / engram stats --tui / engram list
+> ```
 
 ## MCP Tools
 
@@ -492,21 +512,29 @@ Recommended full structure:
 - `examples/_index.md` + case files: Examples index (with uses references) + case studies
 - `memory/`: Dynamic memory directory (auto-generated during conversation, no manual setup needed)
 
-### Example-to-Knowledge Links (uses frontmatter)
+### Example Metadata (YAML frontmatter)
 
-Each example file uses YAML frontmatter to reference knowledge files:
+Each example file should use structured YAML frontmatter with at least `id` / `title` / `uses` / `tags` / `updated_at`:
 
 ```markdown
 ---
+id: example_fitness_coach_knee_pain_office_worker
+title: Knee Pain Office Worker
 uses:
   - knowledge/knee-injury-training.md
   - knowledge/beginner-training-plan.md
+tags:
+  - fitness-coach
+  - example
+  - knee-injury-training
+  - beginner-training-plan
+updated_at: 2026-02-26
 ---
 
 Problem: 32-year-old office worker, knee discomfort from prolonged sitting...
 ```
 
-One example can reference multiple knowledge files, naturally supporting "mixed knowledge cases." Knowledge files stay atomic; examples handle combination and application.
+`uses` defines example-to-knowledge links; `id` gives stable unique identity; `updated_at` should follow `YYYY-MM-DD`; `tags` enables topic filtering. Knowledge files stay atomic, while examples focus on combination and application.
 
 > When you have more than 10 knowledge files, use `###` headings in `_index.md` to group by topic, helping the model locate relevant entries quickly.
 
@@ -604,7 +632,7 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 | Others | Your tool's system prompt configuration |
 
 ```text
-You have an expert memory system available. Call list_engrams() at the start of each conversation to see available experts.
+You have an expert memory system available. Call list_engrams() from the engram-server MCP at the start of each conversation to see available experts.
 - When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
 - When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
 - For time-sensitive memories ("user is studying for an exam", "user is injured"), add an expires param (YYYY-MM-DD, e.g. "2026-06-01"). Expired entries are archived and hidden from future loads.
@@ -622,6 +650,7 @@ You have an expert memory system available. Call list_engrams() at the start of 
 - When the user asks about an engram's details, call get_engram_info(name).
 - When the user wants to install a new engram, call install_engram(source) where source is a git URL.
 - To directly edit an engram's role.md / workflow.md / rules.md or other non-knowledge files, call write_engram_file(name, path, content, mode).
+- When the user asks about memory statistics or wants to know how many memories exist, suggest running `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` or `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui` in the terminal.
 ```
 
 ### Method B: MCP Prompt
@@ -675,7 +704,7 @@ pytest -q
 
 - MCP server core: list / load / read_file / install / init
 - Layered lazy-loading architecture: base layer + index (with inline summaries) + on-demand full text
-- Example-to-knowledge links: uses frontmatter
+- Example-to-knowledge links: structured YAML frontmatter (`id/title/uses/tags/updated_at`)
 - Template system: `engram-server init` creates standard structure
 - Test coverage: loader / server / install
 - 11 complete example Engrams
@@ -709,6 +738,12 @@ pytest -q
 - `delete_memory` tool: delete a specific memory entry by summary, removing it from both the index and category file
 - `correct_memory` tool: correct an existing memory entry, updating content, type, and tags in both the index and category file
 - `add_knowledge` tool: dynamically add new knowledge files to an Engram during conversation, with automatic index update
+
+### Completed (v0.8.0)
+
+- `engram-server stats`: CLI stats command showing memory/knowledge/examples counts, type distribution, recent activity
+- `engram-server stats --tui`: Rich-rendered stats dashboard (colored tables + panels)
+- `rich>=13.0` as a required dependency, no impact on one-command install experience
 
 ### Planned
 

@@ -1,7 +1,15 @@
 ---
+id: example_user_persona_推荐早教App
+title: 推荐早教App
 uses:
   - knowledge/育儿焦虑.md
   - knowledge/触媒习惯.md
+tags:
+  - user-persona
+  - example
+  - 育儿焦虑
+  - 触媒习惯
+updated_at: 2026-02-26
 ---
 
 # 推荐早教App

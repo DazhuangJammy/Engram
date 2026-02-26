@@ -1,6 +1,6 @@
 # Engram MCP Server 开发计划
 
-> 更新时间：2026-02-25
+> 更新时间：2026-02-26
 > 目标：做一个独立的 MCP server，让任何支持 MCP 的 agent 都能连接，共享记忆包（Engram）。
 > 核心理念：记忆决定了 agent 是"每次从零开始的聊天机器人"还是"真正了解你的人"。
 > Engram 不限于专家——它可以是顾问、老朋友、聊天伙伴、虚构角色，任何你想让 AI "成为"的身份。
@@ -81,7 +81,7 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 │   │   └── ...
 │   ├── examples/                        # 案例层（按需加载）
 │   │   ├── _index.md                    # 案例索引
-│   │   ├── 膝盖疼的上班族.md             # 案例（含 uses frontmatter）
+│   │   ├── 膝盖疼的上班族.md             # 案例（含结构化 frontmatter）
 │   │   └── ...
 │   └── memory/                          # 动态记忆（对话中自动生成）
 │       ├── _index.md                    # 记忆热层索引（最近50条，自动维护）
@@ -97,22 +97,29 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
     └── ...
 ```
 
-### 案例→知识关联（uses frontmatter）
+### 案例元数据（YAML frontmatter）
 
-每个案例文件头部用 YAML frontmatter 标注引用的知识文件：
+每个案例文件头部建议使用结构化 YAML frontmatter，至少包含 `id` / `title` / `uses` / `tags` / `updated_at`：
 
 ```markdown
 ---
+id: example_fitness_coach_膝盖疼的上班族
+title: 膝盖疼的上班族
 uses:
   - knowledge/膝关节损伤训练.md
   - knowledge/新手训练计划.md
+tags:
+  - fitness-coach
+  - example
+  - 膝关节损伤训练
+  - 新手训练计划
+updated_at: 2026-02-26
 ---
 
 问题描述：32岁上班族，久坐...
 ```
 
-一个案例可引用多个知识文件，天然支持"混合知识案例"。
-知识文件保持原子化，案例负责组合与落地。
+`uses` 负责案例→知识关联；`id` 便于唯一标识与追踪；`updated_at` 统一 `YYYY-MM-DD`；`tags` 用于主题检索与筛选。知识文件保持原子化，案例负责组合与落地。
 
 ### 索引分组（推荐）
 
@@ -266,6 +273,7 @@ engram-mcp-server/
 │       ├── __init__.py
 │       ├── server.py            # MCP server 入口，注册工具 + CLI
 │       ├── loader.py            # EngramLoader：扫描、读取、写入、记忆捕获
+│       ├── stats.py             # 统计数据收集 + 纯文本/Rich 双模式渲染
 │       └── templates/           # engram-server init 模板
 │           ├── meta.json
 │           ├── role.md
@@ -278,7 +286,8 @@ engram-mcp-server/
 │   │   └── fitness-coach/       # 完整测试用 Engram 包
 │   ├── test_loader.py
 │   ├── test_server.py
-│   └── test_install.py
+│   ├── test_install.py
+│   └── test_stats.py
 └── .claude/
     └── engram/
         └── fitness-coach/       # 运行时 Engram 包（供本项目自身使用）
@@ -290,6 +299,7 @@ engram-mcp-server/
 
 ```
 mcp              # MCP SDK（Python），提供 server 框架
+rich>=13.0       # 终端渲染（stats --tui 面板）
 ```
 
 零外部依赖（无向量数据库、无 embedding 模型）。
@@ -339,6 +349,8 @@ engram-server serve [--packs-dir DIR]   # 启动 MCP stdio server（默认）
 engram-server list [--packs-dir DIR]    # 列出已安装的 Engram
 engram-server install <git-url>         # 从 git 安装 Engram 包
 engram-server init <name>               # 从模板创建新 Engram 包
+engram-server stats [--packs-dir DIR]   # 查看记忆统计（纯文本）
+engram-server stats --tui               # 查看记忆统计（Rich 渲染版）
 ```
 
 ---
@@ -349,7 +361,7 @@ engram-server init <name>               # 从模板创建新 Engram 包
 
 - MCP server 核心功能：list / load / read_file / install / init
 - 分层懒加载架构：常驻层 + 索引（含内联摘要）+ 按需全文
-- 案例→知识关联：uses frontmatter（索引中内联展示）
+- 案例→知识关联：结构化 YAML frontmatter（id/title/uses/tags/updated_at，索引中内联展示）
 - 模板系统：engram-server init 创建标准结构
 - 测试覆盖：loader / server / install
 - 示例 Engram：fitness-coach（专家顾问）、old-friend（聊天伙伴）
@@ -405,6 +417,14 @@ engram-server init <name>               # 从模板创建新 Engram 包
 - **记忆置信度**：`memory_type` 新增 `inferred`（LLM推断）和 `stated`（用户明确表达）两个值
 - 所有示例 Engram 的 `rules.md` 新增 `## Onboarding` 区块
 - 新增继承示例 Engram：`sports-nutritionist`（extends fitness-coach）
+
+### 已完成（v0.8.0）
+
+- `engram-server stats` CLI 命令：查看所有 Engram 的记忆/知识/案例数量、类型分布、最近活动
+- `engram-server stats --tui`：Rich 渲染版统计面板（彩色表格 + 面板）
+- `rich>=13.0` 作为必装依赖
+- 新增 `src/engram_server/stats.py`（数据类 + gather_stats + render_plain + render_tui）
+- 新增 `tests/test_stats.py`（7 个测试用例）
 
 ### 下一阶段（P1）
 

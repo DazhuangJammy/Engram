@@ -47,7 +47,8 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 - Index 分层：`_index.md` 只保留最近50条（热层），完整记录写入 `_index_full.md`（冷层）
 - Engram 继承：`meta.json` 支持 `extends` 字段，自动合并父 Engram 的 knowledge index
 - 冷启动引导：`rules.md` 支持 `## Onboarding` 区块，首次使用时自动触发信息收集
-- CLI 命令：`serve` / `list` / `install` / `init`
+- CLI 命令：`serve` / `list` / `install` / `init` / `stats`
+- 统计面板：`engram-server stats` 查看记忆统计，`--tui` 启用 rich 渲染
 
 ## 设计理念：索引驱动的分层懒加载
 
@@ -129,7 +130,7 @@ claude mcp remove --scope user engram-server
 在项目的 `CLAUDE.md`（Claude Code）或 `AGENTS.md`（Codex）文件开头加入以下提示词，让 AI 自动发现和使用 Engram：
 
 ```text
-你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
+你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 mcp 中的list_engrams() 查看可用专家。
 - 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
 - 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
 - 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。
@@ -147,6 +148,7 @@ claude mcp remove --scope user engram-server
 - 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)
 - 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
 - 需要直接修改 engram 的 role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)
+- 用户询问记忆统计或想了解当前有多少记忆时，建议用户在终端运行 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` 或 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui`
 ```
 
 ### 4. 重启 AI 客户端，开始使用
@@ -183,7 +185,25 @@ engram-server install <git-url> --packs-dir ~/.engram
 engram-server init my-expert --packs-dir ~/.engram
 ```
 
+查看记忆统计（纯文本）：
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats
+```
+
+查看记忆统计（Rich 渲染版）：
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
+```
+
 > 如果你在 MCP 配置里用了自定义 `--packs-dir`，这里的所有命令也要保持同一个目录。
+>
+> 小技巧：命令较长，可以设个 alias 简化日常使用：
+> ```bash
+> alias engram='uvx --from git+https://github.com/DazhuangJammy/Engram engram-server'
+> # 之后直接用：engram stats / engram stats --tui / engram list
+> ```
 
 ## MCP 工具列表
 
@@ -529,21 +549,29 @@ my-engram/
 
 所有内置示例（`examples/` 目录）均已包含针对各自领域的记忆规则，可直接参考。
 
-### 案例→知识关联（uses frontmatter）
+### 案例元数据（YAML frontmatter）
 
-每个案例文件头部用 YAML frontmatter 标注引用的知识文件：
+每个案例文件头部建议使用结构化 YAML frontmatter，至少包含 `id` / `title` / `uses` / `tags` / `updated_at`：
 
 ```markdown
 ---
+id: example_fitness_coach_膝盖疼的上班族
+title: 膝盖疼的上班族
 uses:
   - knowledge/膝关节损伤训练.md
   - knowledge/新手训练计划.md
+tags:
+  - fitness-coach
+  - example
+  - 膝关节损伤训练
+  - 新手训练计划
+updated_at: 2026-02-26
 ---
 
 问题描述：32岁上班族，久坐导致膝盖不适...
 ```
 
-一个案例可引用多个知识文件，天然支持"混合知识案例"。知识文件保持原子化，案例负责组合与落地。`_index.md` 中也会展示 uses 关联，帮助模型快速判断哪些案例和知识相关。
+`uses` 负责案例→知识关联；`id` 便于唯一标识与追踪；`updated_at` 建议统一 `YYYY-MM-DD`；`tags` 用于主题检索与筛选。知识文件保持原子化，案例负责组合与落地。`_index.md` 中也会展示 uses 关联，帮助模型快速判断哪些案例和知识相关。
 
 > 当知识文件超过 10 个时，建议在 `_index.md` 中用 `###` 按主题分组，帮助模型快速定位相关条目，避免平铺过长导致漏看。参见 `examples/fitness-coach/knowledge/_index.md`。
 
@@ -641,7 +669,7 @@ uses:
 | 其他 | 对应工具的 system prompt 配置 |
 
 ```text
-你有一个专家记忆系统可用。对话开始时先调用 list_engrams() 查看可用专家。
+你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 mcp 中的list_engrams() 查看可用专家。
 - 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
 - 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
 - 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。
@@ -659,6 +687,7 @@ uses:
 - 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)
 - 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
 - 需要直接修改 engram 的 role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)
+- 用户询问记忆统计或想了解当前有多少记忆时，建议用户在终端运行 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` 或 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui`
 ```
 
 ### 方式 B：MCP Prompt
@@ -712,7 +741,7 @@ pytest -q
 
 - MCP server 核心功能：list / load / read_file / install / init
 - 分层懒加载架构：常驻层 + 索引（含内联摘要）+ 按需全文
-- 案例→知识关联：uses frontmatter
+- 案例→知识关联：结构化 YAML frontmatter（id/title/uses/tags/updated_at）
 - 模板系统：`engram-server init` 创建标准结构
 - 测试覆盖：loader / server / install
 - 11 个完整示例 Engram
@@ -746,6 +775,12 @@ pytest -q
 - `delete_memory` 工具：按摘要精确删除一条记忆，同时从索引和分类文件中移除
 - `correct_memory` 工具：修正已有记忆内容，更新索引和分类文件，支持重新指定类型和标签
 - `add_knowledge` 工具：对话中动态向 Engram 添加新知识文件，自动更新知识索引
+
+### 已完成（v0.8.0）
+
+- `engram-server stats`：CLI 统计命令，查看所有 Engram 的记忆/知识/案例数量、类型分布、最近活动
+- `engram-server stats --tui`：Rich 渲染版统计面板（彩色表格 + 面板）
+- `rich>=13.0` 作为必装依赖，不影响一键安装体验
 
 ### 计划中
 

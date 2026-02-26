@@ -1,5 +1,6 @@
 你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 mcp 中的list_engrams() 查看可用专家。
 - 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
+- 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge/*.md。
 - 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
 - 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。                                                                                
 - load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并capture_memory   
@@ -16,3 +17,8 @@
 - 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)                                                                                                                    
 - 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
 - 需要直接修改 engram 的role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)  
+- 新增/修改案例文件时，要求必须包含这 5 个字段；id 全局唯一，updated_at 用当天日期。
+- 若发现 frontmatter 缺字段或 uses 指向不存在文件，先修复再继续回答。
+- 多案例命中时，先按 tags 匹配，再参考 updated_at 选更近的案例。
+- 回复中引用案例时优先带 title + id，减少歧义。
+- 用户询问记忆统计或想了解当前有多少记忆时，建议用户在终端运行 uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats 或 uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui  
