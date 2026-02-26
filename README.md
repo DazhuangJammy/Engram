@@ -84,104 +84,47 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 
 ## 安装
 
-### 快捷方式：让 AI 帮你装
+### 前置条件
 
-如果你不想手动安装，直接把下面这段话发给你的 Claude Code / Codex / OpenClaw：
-
-```text
-帮我安装并配置这个 MCP 项目 https://github.com/DazhuangJammy/Engram.git
-配置项目之后记得把项目里的 examples 加载到我的 engram 里面
-最后告诉我这个项目要怎么用
-```
-
-AI 会自动帮你完成克隆、配置、加载示例的全部流程。
-
----
-
-### 手动安装
-
-#### 1. 安装 Homebrew（如果还没有）
-
-macOS / Linux：
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-> 安装完成后按终端提示将 Homebrew 加入 PATH。详见 [brew.sh](https://brew.sh/)。
-
-### 2. 安装 uv
-
-[uv](https://docs.astral.sh/uv/) 是一个极快的 Python 包管理器，会自动管理 Python 版本和依赖：
-
-```bash
-brew install uv
-```
-
-<details>
-<summary>其他安装 uv 的方式</summary>
+需要先安装 [uv](https://docs.astral.sh/uv/)（极快的 Python 包管理器）：
 
 ```bash
 # macOS / Linux
+brew install uv
+# 或
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Windows
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-</details>
+### 一键安装
 
-### 3. 克隆项目
-
-建议放到一个固定位置（后续配置需要用到这个路径）：
+在终端输入一条命令，即可完成安装和 MCP 配置：
 
 ```bash
-# 推荐放到用户目录下
-git clone https://github.com/DazhuangJammy/Engram.git ~/engram-mcp-server
-
-# 或者放到你喜欢的任意位置
-git clone https://github.com/DazhuangJammy/Engram.git /your/preferred/path/engram-mcp-server
+claude mcp add --scope user engram-server -- uvx --from git+https://github.com/DazhuangJammy/Engram engram-server
 ```
 
-克隆完成后不需要执行 `pip install`，后续通过 `uv run --directory` 直接运行，uv 会自动处理所有依赖。
+这条命令会：
+- 将 MCP 配置写入全局（所有项目都能用）
+- 不往你的项目里塞任何代码
+- 每次 Claude Code 启动时，自动从 GitHub 拉取最新版本运行
+- 专家包数据默认存放在 `~/.engram`
+
+安装完成后**重启 Claude Code**，即可开始使用。
+
+### 一键卸载
+
+```bash
+claude mcp remove --scope user engram-server
+```
+
+> 卸载只移除 MCP 配置，不会删除你的 Engram 数据（`~/.engram/`）。如需彻底清理数据，手动执行 `rm -rf ~/.engram`。
 
 ## 快速开始
 
-### 1. 配置 MCP Server
-
-在你的项目根目录创建 `.mcp.json`（以 Claude Code 为例）：
-
-```json
-{
-  "mcpServers": {
-    "engram-server": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory", "~/engram-mcp-server",
-        "engram-server",
-        "--packs-dir", "~/.engram"
-      ]
-    }
-  }
-}
-```
-
-> 将 `~/engram-mcp-server` 替换为你克隆项目的实际路径。
-
-### 2. 创建 Engram 存放目录
-
-```bash
-mkdir -p ~/.engram
-```
-
-将 Engram 包放到 `~/.engram/<name>/` 下，或者用项目自带的示例试试：
-
-```bash
-cp -r ~/engram-mcp-server/examples/fitness-coach ~/.engram/fitness-coach
-```
-
-### 3. 添加 System Prompt（推荐）
+### 添加 System Prompt（推荐）
 
 在项目的 `CLAUDE.md`（Claude Code）或 `AGENTS.md`（Codex）文件开头加入以下提示词，让 AI 自动发现和使用 Engram：
 
@@ -747,16 +690,15 @@ _CONSOLIDATE_HINT_THRESHOLD = 30
 
 ## 更新项目
 
-项目通过 `uv run --directory` 运行，**不需要重新安装**，只需拉取最新代码：
+如果使用一键安装（`uvx --from git+...`），清除缓存后重启即可获取最新版本：
 
 ```bash
-cd ~/engram-mcp-server   # 替换为你的实际克隆路径
-git pull
+uv cache clean
 ```
 
-拉取后**重启 AI 客户端**（Claude Desktop / Claude Code 等），MCP server 会自动加载新版本。
+然后**重启 Claude Code**，`uvx` 会自动从 GitHub 拉取最新代码。
 
-> 你的 Engram 数据存放在 `~/.engram/` 目录，与项目代码完全分离，更新代码不会影响已有数据。
+> 你的 Engram 数据存放在 `~/.engram/` 目录，与项目代码完全分离，更新不会影响已有数据。
 
 ## 测试
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,32 +22,66 @@ _CONSOLIDATE_HINT_THRESHOLD = 30
 class EngramLoader:
     """Load Engram packs from a directory."""
 
-    def __init__(self, packs_dir: Path):
-        self.packs_dir = Path(packs_dir).expanduser()
+    def __init__(
+        self,
+        packs_dir: Path | str | Iterable[Path | str],
+        *,
+        default_packs_dir: Path | str | None = None,
+    ):
+        if isinstance(packs_dir, (str, Path)):
+            raw_dirs: list[Path | str] = [packs_dir]
+        else:
+            raw_dirs = list(packs_dir)
+
+        if not raw_dirs:
+            raise ValueError("packs_dir must include at least one directory")
+
+        normalized_dirs: list[Path] = []
+        seen: set[Path] = set()
+        for item in raw_dirs:
+            resolved = Path(item).expanduser().resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            normalized_dirs.append(resolved)
+
+        self.packs_dirs = normalized_dirs
+        if default_packs_dir is None:
+            self.packs_dir = self.packs_dirs[0]
+        else:
+            self.packs_dir = Path(default_packs_dir).expanduser().resolve()
         self._throttle_cache: dict[str, float] = {}
 
     def list_engrams(self) -> list[dict[str, Any]]:
-        if not self.packs_dir.exists():
-            return []
-
         engrams: list[dict[str, Any]] = []
-        for entry in sorted(self.packs_dir.iterdir()):
-            if not entry.is_dir():
+        seen_names: set[str] = set()
+        for packs_root in self.packs_dirs:
+            if not packs_root.exists():
                 continue
-            meta = self._read_meta(entry / "meta.json")
-            if meta is None:
-                continue
-            engrams.append(
-                {
-                    "name": meta.get("name", entry.name),
-                    "description": meta.get("description", ""),
-                    "tags": meta.get("tags", []),
-                    "version": meta.get("version", ""),
-                    "author": meta.get("author", ""),
-                    "knowledge_count": meta.get("knowledge_count", 0),
-                    "examples_count": meta.get("examples_count", 0),
-                }
-            )
+
+            for entry in sorted(packs_root.iterdir()):
+                if not entry.is_dir():
+                    continue
+                meta = self._read_meta(entry / "meta.json")
+                if meta is None:
+                    continue
+
+                name = str(meta.get("name", entry.name))
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+
+                engrams.append(
+                    {
+                        "name": name,
+                        "description": meta.get("description", ""),
+                        "tags": meta.get("tags", []),
+                        "version": meta.get("version", ""),
+                        "author": meta.get("author", ""),
+                        "knowledge_count": meta.get("knowledge_count", 0),
+                        "examples_count": meta.get("examples_count", 0),
+                    }
+                )
         return engrams
 
     def get_engram_info(self, name: str) -> dict[str, Any] | None:
@@ -757,17 +792,17 @@ class EngramLoader:
         return f"## {title}\n{content.strip()}"
 
     def _resolve_engram_dir(self, name: str) -> Path | None:
-        packs_root = self.packs_dir.resolve()
-        engram_dir = (packs_root / name).resolve()
+        for packs_root in self.packs_dirs:
+            engram_dir = (packs_root / name).resolve()
 
-        try:
-            engram_dir.relative_to(packs_root)
-        except ValueError:
-            return None
+            try:
+                engram_dir.relative_to(packs_root)
+            except ValueError:
+                continue
 
-        if not engram_dir.is_dir():
-            return None
-        return engram_dir
+            if engram_dir.is_dir():
+                return engram_dir
+        return None
 
     def _resolve_file(self, name: str, relative_path: str) -> Path | None:
         engram_dir = self._resolve_engram_dir(name)

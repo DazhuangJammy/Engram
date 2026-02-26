@@ -476,6 +476,52 @@ def test_global_memory_is_loaded_across_engrams(tmp_path: Path) -> None:
     assert "居住地：深圳" in loaded
 
 
+def test_loader_reads_from_project_and_global_roots(tmp_path: Path) -> None:
+    project_root = tmp_path / "project-engram"
+    global_root = tmp_path / "global-engram"
+    project_root.mkdir()
+    global_root.mkdir()
+    _make_engram(project_root, "project-only")
+    _make_engram(global_root, "global-only")
+
+    shared_project = project_root / "shared-expert" / "meta.json"
+    shared_project.parent.mkdir(parents=True)
+    shared_project.write_text(
+        '{"name":"shared-expert","description":"project version"}',
+        encoding="utf-8",
+    )
+    (shared_project.parent / "role.md").write_text("project role", encoding="utf-8")
+
+    shared_global = global_root / "shared-expert" / "meta.json"
+    shared_global.parent.mkdir(parents=True)
+    shared_global.write_text(
+        '{"name":"shared-expert","description":"global version"}',
+        encoding="utf-8",
+    )
+    (shared_global.parent / "role.md").write_text("global role", encoding="utf-8")
+
+    loader = EngramLoader(
+        packs_dir=[project_root, global_root],
+        default_packs_dir=global_root,
+    )
+    listed = loader.list_engrams()
+    names = [item["name"] for item in listed]
+
+    assert {"project-only", "global-only", "shared-expert"}.issubset(set(names))
+    assert names.count("shared-expert") == 1
+    assert loader.get_engram_info("shared-expert")["description"] == "project version"
+
+    ok = loader.capture_memory(
+        "shared-expert",
+        "全局偏好：中文回复",
+        "profile",
+        "语言偏好：中文",
+        is_global=True,
+    )
+    assert ok is True
+    assert (global_root / "_global" / "memory" / "_index.md").is_file()
+
+
 def test_load_engram_base_supports_parent_knowledge_inheritance(tmp_path: Path) -> None:
     parent = tmp_path / "parent"
     parent.mkdir()

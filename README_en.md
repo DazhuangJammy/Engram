@@ -82,104 +82,47 @@ The skeleton stays loaded at all times. Knowledge is controlled via "index with 
 
 ## Installation
 
-### Quick Way: Let AI Install It For You
+### Prerequisites
 
-If you don't want to install manually, just send this to your Claude Code / Codex / OpenClaw:
-
-```text
-Help me install and configure this MCP project: https://github.com/DazhuangJammy/Engram.git
-After configuring, load the examples from the project into my engram directory.
-Then tell me how to use this project.
-```
-
-The AI will handle cloning, configuration, and loading examples automatically.
-
----
-
-### Manual Installation
-
-#### 1. Install Homebrew (if you don't have it)
-
-macOS / Linux:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-> After installation, follow the terminal instructions to add Homebrew to your PATH. See [brew.sh](https://brew.sh/).
-
-#### 2. Install uv
-
-[uv](https://docs.astral.sh/uv/) is an extremely fast Python package manager that automatically manages Python versions and dependencies:
-
-```bash
-brew install uv
-```
-
-<details>
-<summary>Other ways to install uv</summary>
+Install [uv](https://docs.astral.sh/uv/) (an extremely fast Python package manager):
 
 ```bash
 # macOS / Linux
+brew install uv
+# or
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Windows
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-</details>
+### One-Command Install
 
-#### 3. Clone the Project
-
-Clone to a fixed location (you'll need this path for configuration):
+Run a single command in your terminal to install and configure the MCP server:
 
 ```bash
-# Recommended: clone to home directory
-git clone https://github.com/DazhuangJammy/Engram.git ~/engram-mcp-server
-
-# Or clone to any location you prefer
-git clone https://github.com/DazhuangJammy/Engram.git /your/preferred/path/engram-mcp-server
+claude mcp add --scope user engram-server -- uvx --from git+https://github.com/DazhuangJammy/Engram engram-server
 ```
 
-No `pip install` needed after cloning. The project runs via `uv run --directory`, and uv handles all dependencies automatically.
+This command will:
+- Write the MCP config globally (available in all projects)
+- No code is added to your project
+- Each time Claude Code starts, it automatically pulls the latest version from GitHub
+- Engram packs are stored in `~/.engram` by default
+
+After installation, **restart Claude Code** to start using it.
+
+### One-Command Uninstall
+
+```bash
+claude mcp remove --scope user engram-server
+```
+
+> Uninstalling only removes the MCP config — your Engram data (`~/.engram/`) is preserved. To fully clean up data, run `rm -rf ~/.engram` manually.
 
 ## Quick Start
 
-### 1. Configure MCP Server
-
-Create `.mcp.json` in your project root (Claude Code example):
-
-```json
-{
-  "mcpServers": {
-    "engram-server": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory", "~/engram-mcp-server",
-        "engram-server",
-        "--packs-dir", "~/.engram"
-      ]
-    }
-  }
-}
-```
-
-> Replace `~/engram-mcp-server` with your actual clone path.
-
-### 2. Create Engram Storage Directory
-
-```bash
-mkdir -p ~/.engram
-```
-
-Place Engram packs in `~/.engram/<name>/`, or try the bundled examples:
-
-```bash
-cp -r ~/engram-mcp-server/examples/fitness-coach ~/.engram/fitness-coach
-```
-
-### 3. Add System Prompt (Recommended)
+### Add System Prompt (Recommended)
 
 Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex) to let AI automatically discover and use Engrams:
 
@@ -710,14 +653,13 @@ Suggested values:
 
 ## Updating the Project
 
-The project runs via `uv run --directory` — **no reinstall needed**, just pull the latest code:
+If you used the one-command install (`uvx --from git+...`), clear the cache and restart to get the latest version:
 
 ```bash
-cd ~/engram-mcp-server   # replace with your actual clone path
-git pull
+uv cache clean
 ```
 
-After pulling, **restart your AI client** (Claude Desktop / Claude Code / etc.) to reload the MCP server.
+Then **restart Claude Code** — `uvx` will automatically pull the latest code from GitHub.
 
 > Your Engram data lives in `~/.engram/`, completely separate from the project code. Updating won't affect your existing data.
 

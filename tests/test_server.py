@@ -8,6 +8,8 @@ import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from engram_server.server import _build_loader_roots
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -278,3 +280,33 @@ def _setup_tmp_engram(tmp_path: Path, name: str) -> None:
         encoding="utf-8",
     )
     (d / "role.md").write_text("# Test Role\nA test expert.", encoding="utf-8")
+
+
+def test_build_loader_roots_prefers_project_claude_engram(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    project_packs = workspace / ".claude" / "engram"
+    project_packs.mkdir(parents=True)
+    global_packs = tmp_path / "global-engram"
+    global_packs.mkdir()
+
+    monkeypatch.chdir(workspace)
+    roots = _build_loader_roots(global_packs)
+
+    assert roots == [project_packs.resolve(), global_packs.resolve()]
+
+
+def test_build_loader_roots_fallback_to_configured_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    global_packs = tmp_path / "global-engram"
+    global_packs.mkdir()
+
+    monkeypatch.chdir(workspace)
+    roots = _build_loader_roots(global_packs)
+
+    assert roots == [global_packs.resolve()]

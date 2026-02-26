@@ -60,6 +60,36 @@ def _find_template_dir() -> Path | None:
     return None
 
 
+def _build_loader_roots(
+    packs_dir: Path | str,
+    *,
+    cwd: Path | None = None,
+) -> list[Path]:
+    """Build search roots for Engram loading.
+
+    Priority:
+    1) project-level .claude/engram (if exists)
+    2) configured --packs-dir (global/default)
+    """
+    configured = Path(packs_dir).expanduser().resolve()
+    project_root = (cwd or Path.cwd()).resolve()
+    project_engram = (project_root / ".claude" / "engram").resolve()
+
+    roots: list[Path] = []
+    if project_engram.is_dir():
+        roots.append(project_engram)
+    roots.append(configured)
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        deduped.append(root)
+    return deduped
+
+
 def install_engram_from_source(source: str, packs_dir: Path) -> dict[str, str | bool]:
     packs_dir = packs_dir.expanduser()
     packs_dir.mkdir(parents=True, exist_ok=True)
@@ -468,7 +498,11 @@ def run_server(packs_dir: Path) -> None:
     packs_dir = packs_dir.expanduser()
     packs_dir.mkdir(parents=True, exist_ok=True)
 
-    loader = EngramLoader(packs_dir=packs_dir)
+    loader_roots = _build_loader_roots(packs_dir)
+    loader = EngramLoader(
+        packs_dir=loader_roots,
+        default_packs_dir=packs_dir,
+    )
     app = create_mcp_app(loader=loader, packs_dir=packs_dir)
     app.run(transport="stdio")
 
@@ -507,7 +541,11 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "list":
-        loader = EngramLoader(Path(args.packs_dir))
+        packs_dir = Path(args.packs_dir)
+        loader = EngramLoader(
+            packs_dir=_build_loader_roots(packs_dir),
+            default_packs_dir=packs_dir,
+        )
         print(_format_engrams(loader.list_engrams()))
         return
 

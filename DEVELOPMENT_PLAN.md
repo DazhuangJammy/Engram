@@ -19,10 +19,11 @@
 ### 用户使用流程
 
 ```
-1. 安装 MCP server：pip install engram-mcp-server
-2. 下载 Engram 包到本地目录（或用 engram-server install <git-url>）
-3. 在 agent 配置中添加 MCP server 连接
-4. Agent 通过 MCP 工具调用 Engram，获取专家知识
+1. 一键安装：claude mcp add --scope user engram-server -- uvx --from git+https://github.com/DazhuangJammy/Engram engram-server
+2. 重启 Claude Code
+3. 安装 Engram 包（通过 MCP 工具 install_engram 或 CLI engram-server install <git-url>）
+4. 在 CLAUDE.md 或 system prompt 加提示词
+5. 开始使用
 ```
 
 ---
@@ -300,7 +301,7 @@ mcp              # MCP SDK（Python），提供 server 框架
 
 ### MCP Server 分发
 - GitHub 开源
-- 发布 PyPI：`pip install engram-mcp-server`
+- 通过 `uvx --from git+URL` 直接运行，无需发布 PyPI
 - 本地运行，不需要云服务器
 
 ### Engram 包分发
@@ -312,25 +313,23 @@ mcp              # MCP SDK（Python），提供 server 框架
 ### 用户完整流程
 
 ```bash
-# 1. 安装 MCP server
-pip install engram-mcp-server
+# 1. 一键安装（全局配置，所有项目可用）
+claude mcp add --scope user engram-server -- uvx --from git+https://github.com/DazhuangJammy/Engram engram-server
 
-# 2. 安装 Engram 包（三选一）
-engram-server install https://github.com/xxx/fitness-coach
-# 或 git clone https://github.com/xxx/fitness-coach ~/.engram/fitness-coach
-# 或让 agent 调用 install_engram 工具
+# 2. 重启 Claude Code
 
-# 3. 在 agent 配置中添加 MCP 连接（以 Claude Desktop 为例）
-# claude_desktop_config.json:
-#   "mcpServers": {
-#     "engram": {
-#       "command": "engram-server",
-#       "args": ["--packs-dir", "~/.engram"]
-#     }
-#   }
+# 3. 安装 Engram 包（三选一）
+# 方式一：让 agent 调用 install_engram 工具
+# 方式二：CLI 安装
+#   engram-server install https://github.com/xxx/fitness-coach
+# 方式三：手动 clone
+#   git clone https://github.com/xxx/fitness-coach ~/.engram/fitness-coach
 
 # 4. 在 CLAUDE.md 或 system prompt 加提示词
 # 5. 开始使用
+
+# 卸载
+claude mcp remove --scope user engram-server
 ```
 
 ### CLI 命令
