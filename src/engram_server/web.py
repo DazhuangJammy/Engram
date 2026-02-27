@@ -25,10 +25,14 @@ def _json(data: Any, status: int = 200) -> JSONResponse:
 
 
 def _build_loader(packs_dir: Path) -> EngramLoader:
-    from engram_server.server import _build_loader_roots
+    configured = Path(packs_dir).expanduser().resolve()
+    project_engram = (Path.cwd().resolve() / ".claude" / "engram").resolve()
 
-    roots = _build_loader_roots(packs_dir)
-    return EngramLoader(packs_dir=roots, default_packs_dir=packs_dir)
+    # Web UI should focus on the current project workspace when available.
+    if project_engram.is_dir():
+        return EngramLoader(packs_dir=[project_engram], default_packs_dir=project_engram)
+
+    return EngramLoader(packs_dir=[configured], default_packs_dir=configured)
 
 
 # ---------------------------------------------------------------------------
