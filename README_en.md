@@ -335,9 +335,22 @@ engram-server stats --csv --packs-dir ~/.engram
 # Search first
 engram-server search fitness --packs-dir ~/.engram
 
-# Install by name (resolved to source URL automatically)
+# Install by name
 engram-server install fitness-coach --packs-dir ~/.engram
 ```
+
+When installing by name, the current version tries in this order:
+- Install from this repo's `examples/<name>` first (Plan 2 path)
+- If no local match exists, resolve `source` from registry and install
+- If registry `source` clone fails, fallback to main repo `examples/<name>`
+
+### How to Submit an Engram PR to This Project
+
+1. Fork this repository and create a feature branch.
+2. Copy `examples/template` to `examples/<your-engram-name>` and fill in your content.
+3. Ensure `meta.json` and `examples/*.md` frontmatter are complete (`id/title/uses/tags/updated_at`).
+4. Add an entry in `registry.json` (`name/description/author/source/tags/language/version`), with `name` matching the folder name.
+5. Open a PR and describe your Engram's purpose, target scenarios, and sample conversations.
 
 4) Initialize nested-index template
 

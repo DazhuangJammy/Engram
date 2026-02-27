@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -23,6 +24,7 @@ from engram_server.registry import fetch_registry, resolve_name, search_registry
 DEFAULT_PACKS_DIR = Path("~/.engram").expanduser()
 _PROJECT_BOOTSTRAP_COMPLETE_NAME = "starter-complete"
 _PROJECT_BOOTSTRAP_TEMPLATE_NAME = "starter-template"
+_MAIN_REPO_GIT_URL = "https://github.com/DazhuangJammy/Engram.git"
 
 
 def _format_engrams(engrams: list[dict]) -> str:
@@ -66,6 +68,17 @@ def _find_template_dir() -> Path | None:
     ]
     for candidate in candidates:
         if candidate.is_dir() and (candidate / "meta.json").is_file():
+            return candidate
+    return None
+
+
+def _find_examples_dir() -> Path | None:
+    candidates = [
+        Path(__file__).resolve().parents[2] / "examples",
+        Path(__file__).resolve().parent / "examples",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
             return candidate
     return None
 
@@ -305,6 +318,10 @@ def install_engram_from_source(source: str, packs_dir: Path) -> dict[str, str | 
             "message": f"安装失败：git clone 出错。{stderr}",
         }
 
+    return _finalize_installed_pack(target_dir)
+
+
+def _finalize_installed_pack(target_dir: Path) -> dict[str, str | bool]:
     meta_path = target_dir / "meta.json"
     if not meta_path.is_file():
         shutil.rmtree(target_dir, ignore_errors=True)
@@ -328,6 +345,117 @@ def install_engram_from_source(source: str, packs_dir: Path) -> dict[str, str | 
         "ok": True,
         "message": f"安装成功：{name} - {description}",
     }
+
+
+def _install_engram_from_directory(
+    source_dir: Path,
+    packs_dir: Path,
+    *,
+    target_name: str,
+) -> dict[str, str | bool]:
+    packs_dir = packs_dir.expanduser()
+    packs_dir.mkdir(parents=True, exist_ok=True)
+
+    target_dir = packs_dir / target_name
+    if target_dir.exists():
+        return {
+            "ok": False,
+            "message": f"安装失败：目标目录已存在 {target_dir.name}",
+        }
+
+    try:
+        shutil.copytree(source_dir, target_dir)
+    except OSError as exc:
+        return {"ok": False, "message": f"安装失败：复制目录出错。{exc}"}
+
+    return _finalize_installed_pack(target_dir)
+
+
+def _install_engram_from_local_examples(
+    name: str,
+    packs_dir: Path,
+) -> dict[str, str | bool] | None:
+    examples_dir = _find_examples_dir()
+    if examples_dir is None:
+        return None
+
+    source_dir = (examples_dir / name).resolve()
+    if source_dir.parent != examples_dir.resolve():
+        return None
+    if not source_dir.is_dir():
+        return None
+    if not (source_dir / "meta.json").is_file():
+        return None
+
+    result = _install_engram_from_directory(
+        source_dir,
+        packs_dir,
+        target_name=name,
+    )
+    if result["ok"]:
+        result["message"] = f"{result['message']} (来源: 本地 examples/{name})"
+    return result
+
+
+def _install_engram_from_main_repo_examples(
+    name: str,
+    packs_dir: Path,
+) -> dict[str, str | bool] | None:
+    if not _is_valid_engram_name(name):
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="engram-main-repo-") as temp_dir:
+        temp_repo = Path(temp_dir) / "repo"
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", _MAIN_REPO_GIT_URL, str(temp_repo)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            return None
+
+        source_dir = temp_repo / "examples" / name
+        if not source_dir.is_dir():
+            return None
+        if not (source_dir / "meta.json").is_file():
+            return None
+
+        result = _install_engram_from_directory(
+            source_dir,
+            packs_dir,
+            target_name=name,
+        )
+        if result["ok"]:
+            result["message"] = f"{result['message']} (来源: 主仓库 examples/{name})"
+        return result
+
+
+def _install_engram_by_name(name: str, packs_dir: Path) -> dict[str, str | bool]:
+    local_result = _install_engram_from_local_examples(name, packs_dir)
+    if local_result is not None:
+        return local_result
+
+    entries = _load_registry_entries()
+    install_source = resolve_name(name, entries)
+    if install_source is None:
+        return {"ok": False, "message": f"安装失败：未在 registry 中找到 {name}"}
+
+    result = install_engram_from_source(install_source, packs_dir)
+    if result["ok"]:
+        return result
+
+    message = str(result.get("message", ""))
+    if "git clone 出错" not in message:
+        return result
+
+    main_repo_result = _install_engram_from_main_repo_examples(name, packs_dir)
+    if main_repo_result is None:
+        return result
+    if main_repo_result["ok"]:
+        main_repo_result["message"] = f"{main_repo_result['message']}（已回退主仓库 examples）"
+    return main_repo_result
 
 
 def init_engram_pack(
@@ -540,14 +668,9 @@ is blocked."""
     def install_engram(source: str) -> str:
         """Install an Engram pack from git URL or registry name."""
         if _is_url_source(source):
-            install_source = source
+            result = install_engram_from_source(source=source, packs_dir=packs_dir)
         else:
-            entries = _load_registry_entries()
-            install_source = resolve_name(source, entries)
-            if install_source is None:
-                return f"安装失败：未在 registry 中找到 {source}"
-
-        result = install_engram_from_source(source=install_source, packs_dir=packs_dir)
+            result = _install_engram_by_name(source, packs_dir)
         return str(result["message"])
 
     @app.tool()
@@ -928,7 +1051,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     install_parser = subparsers.add_parser(
         "install",
-        help="Install Engram from git URL or registry name",
+        help="Install Engram from local examples, git URL, or registry name",
     )
     install_parser.add_argument("source")
     install_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
@@ -984,15 +1107,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "install":
         source = args.source
         if _is_url_source(source):
-            install_source = source
+            result = install_engram_from_source(source, Path(args.packs_dir))
         else:
-            entries = _load_registry_entries()
-            install_source = resolve_name(source, entries)
-            if install_source is None:
-                print(f"安装失败：未在 registry 中找到 {source}")
-                raise SystemExit(1)
-
-        result = install_engram_from_source(install_source, Path(args.packs_dir))
+            result = _install_engram_by_name(source, Path(args.packs_dir))
         print(result["message"])
         if not result["ok"]:
             raise SystemExit(1)

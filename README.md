@@ -337,9 +337,22 @@ engram-server stats --csv --packs-dir ~/.engram
 # 先搜索
 engram-server search fitness --packs-dir ~/.engram
 
-# 再按名称安装（install 会自动解析为 source URL）
+# 再按名称安装
 engram-server install fitness-coach --packs-dir ~/.engram
 ```
+
+按名称安装时，当前版本会按以下顺序尝试：
+- 先从本项目 `examples/<name>` 安装（方案 2）
+- 若本地无对应目录，再按 registry 的 `source` 安装
+- 若 registry 的 `source` clone 失败，会自动回退到主仓库 `examples/<name>`
+
+### 如何向本项目提交 Engram（PR）
+
+1. Fork 本仓库并新建分支。
+2. 复制 `examples/template` 为 `examples/<your-engram-name>`，补齐内容。
+3. 确保 `meta.json` 与 `examples/*.md` frontmatter 符合规范（`id/title/uses/tags/updated_at`）。
+4. 在 `registry.json` 增加条目（`name/description/author/source/tags/language/version`），`name` 与目录名一致。
+5. 提交 PR，说明你的 Engram 用途、适用场景、示例对话。
 
 4) 初始化分组索引模板
 

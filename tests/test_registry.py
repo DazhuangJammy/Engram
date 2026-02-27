@@ -82,6 +82,10 @@ def test_install_subcommand_uses_registry_for_name(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
+        "engram_server.server._install_engram_from_local_examples",
+        lambda _name, _packs_dir: None,
+    )
+    monkeypatch.setattr(
         "engram_server.server._load_registry_entries",
         lambda: [{"name": "demo-pack", "source": "https://example.com/demo.git"}],
     )
@@ -112,6 +116,52 @@ def test_install_subcommand_keeps_url_branch(
     main(["install", "https://example.com/direct.git", "--packs-dir", str(tmp_path)])
     out = capsys.readouterr().out
     assert "source=https://example.com/direct.git" in out
+
+
+def test_install_subcommand_prefers_local_examples(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "engram_server.server._install_engram_from_local_examples",
+        lambda _name, _packs_dir: {"ok": True, "message": "local-example-ok"},
+    )
+    monkeypatch.setattr(
+        "engram_server.server._load_registry_entries",
+        lambda: (_ for _ in ()).throw(AssertionError("registry should not be used")),
+    )
+
+    main(["install", "demo-pack", "--packs-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "local-example-ok" in out
+
+
+def test_install_subcommand_fallbacks_to_main_repo_examples_on_registry_clone_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "engram_server.server._install_engram_from_local_examples",
+        lambda _name, _packs_dir: None,
+    )
+    monkeypatch.setattr(
+        "engram_server.server._load_registry_entries",
+        lambda: [{"name": "demo-pack", "source": "https://example.com/not-found.git"}],
+    )
+    monkeypatch.setattr(
+        "engram_server.server.install_engram_from_source",
+        lambda _source, _packs_dir: {"ok": False, "message": "安装失败：git clone 出错。404"},
+    )
+    monkeypatch.setattr(
+        "engram_server.server._install_engram_from_main_repo_examples",
+        lambda _name, _packs_dir: {"ok": True, "message": "安装成功：demo-pack - fallback"},
+    )
+
+    main(["install", "demo-pack", "--packs-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "安装成功：demo-pack - fallback（已回退主仓库 examples）" in out
 
 
 def test_search_subcommand_formats_matches(
