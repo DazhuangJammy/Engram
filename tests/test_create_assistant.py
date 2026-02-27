@@ -28,7 +28,7 @@ async def _open_session(packs_dir: Path) -> ClientSession:
             "--packs-dir",
             str(packs_dir),
         ],
-        cwd=str(REPO_ROOT),
+        cwd=str(packs_dir),
     )
 
     stdio = stdio_client(server)
@@ -85,10 +85,21 @@ async def test_create_assistant_guided_auto_fill_and_finalize(tmp_path: Path) ->
     assert "创建完成：rehab-coach" in finalized
     assert "草稿已通过 lint 校验" in finalized
 
-    target = tmp_path / "rehab-coach"
+    target = tmp_path / ".claude" / "engram" / "rehab-coach"
     assert (target / "knowledge" / "_index.md").is_file()
-    assert (target / "examples" / "典型场景.md").is_file()
+    example_file = target / "examples" / "典型场景.md"
+    assert example_file.is_file()
     assert (target / "memory" / "_index.md").is_file()
+    example_text = example_file.read_text(encoding="utf-8")
+    assert "id:" in example_text
+    assert "title:" in example_text
+    assert "uses:" in example_text
+    assert "tags:" in example_text
+    assert "updated_at:" in example_text
+    assert "## 背景" in example_text
+    assert "## 评估过程" in example_text
+    assert "## 最终方案" in example_text
+    assert "## 结果复盘" in example_text
 
 
 @pytest.mark.asyncio
@@ -127,4 +138,4 @@ async def test_create_assistant_from_conversation_and_cancel(tmp_path: Path) -> 
     knowledge_text = payload["draft"]["knowledge"][0]["content"]
     assert "发布前检查清单" in knowledge_text
     assert "已取消创建" in canceled
-    assert not (tmp_path / "ops-coach").exists()
+    assert not (tmp_path / ".claude" / "engram" / "ops-coach").exists()

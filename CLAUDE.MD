@@ -19,6 +19,7 @@
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
 - load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- 若 workflow 明确写了 Skill 调用节点，按节点提示主动调用对应 Skills。
 - load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
 - 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
 

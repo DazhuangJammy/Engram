@@ -74,6 +74,7 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 ├── starter-complete/                    # 自动生成：完整可加载示例
 │   ├── meta.json
 │   ├── role.md / workflow.md / rules.md
+│   │                                  # workflow 内含“可调用 MCP 工具/Skills”的提醒
 │   ├── knowledge/
 │   │   ├── _index.md
 │   │   ├── 目标拆解法.md
@@ -86,6 +87,7 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 ├── starter-template/                    # 自动生成：说明模板
 │   ├── meta.json
 │   ├── role.md / workflow.md / rules.md
+│   │                                  # workflow 内含“可调用 MCP 工具/Skills”的提醒
 │   ├── knowledge/...
 │   └── examples/
 │       ├── 写好案例.md
@@ -261,6 +263,7 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
 - load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- 若 workflow 明确写了 Skill 调用节点，按节点提示主动调用对应 Skills。
 - load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
 - 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
 
@@ -375,6 +378,7 @@ rich>=13.0       # 终端渲染（stats --tui 面板）
 ### Engram 包分发
 - 每个 Engram 包是一个独立 GitHub repo
 - 首次运行会自动在当前项目创建两个本地起始包（`starter-complete` / `starter-template`）
+- 两个起始包都内置了 Skills 调用提醒，用户可直接按 workflow 改造
 - 通过 CLI 安装：`engram-server install <git-url|engram-name>`
 - 或通过 MCP 工具安装：agent 调用 `install_engram("https://github.com/xxx/fitness-coach")`
 - 或手动 clone 到项目 `./.claude/engram/`（也可 clone 到共享目录 `~/.engram/`）

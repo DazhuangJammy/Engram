@@ -172,6 +172,7 @@ Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
 - load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- 若 workflow 明确写了 Skill 调用节点，按节点提示主动调用对应 Skills。
 - load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
 - 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
 
@@ -221,6 +222,7 @@ Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude 
 On first MCP run in a project, you'll automatically get:
 - `./.claude/engram/starter-complete` (complete sample Engram, directly loadable)
 - `./.claude/engram/starter-template` (instruction/template Engram for customization)
+- Both starter packs include a workflow reminder that Skills can be called at decision nodes.
 
 ## CLI Usage
 
@@ -669,6 +671,7 @@ Skills    = Triggerable action workflows (deploy, rollback, code generation, etc
 ```
 
 In `workflow.md`, you can specify which MCP Tools or Skills to call at specific decision points. After loading an Engram, the model follows the workflow to proactively call these tools at the right moments.
+This reminder is already included in both `starter-complete` and `starter-template`, so users can copy it directly.
 
 ## Create Your Own Engram
 
@@ -830,6 +833,7 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
 - load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- 若 workflow 明确写了 Skill 调用节点，按节点提示主动调用对应 Skills。
 - load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
 - 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
 

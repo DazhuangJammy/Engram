@@ -105,11 +105,19 @@ def _render_example_markdown(example: dict[str, Any], engram_name: str, idx: int
     uses = example.get("uses", [])
     tags = example.get("tags", [])
     if not tags:
-        tags = [engram_name, "auto-generated"]
+        tags = [engram_name, "example", "auto-generated"]
+    example_id = str(example.get("id", f"example_{engram_name}_{idx}")).strip()
+    if not example_id:
+        example_id = f"example_{engram_name}_{idx}"
+
+    problem = str(example.get("problem", "待补充背景")).strip() or "待补充背景"
+    assessment = str(example.get("assessment", "待补充评估过程")).strip() or "待补充评估过程"
+    plan = str(example.get("plan", "待补充执行方案")).strip() or "待补充执行方案"
+    review = str(example.get("review", "待补充结果复盘")).strip() or "待补充结果复盘"
 
     lines = [
         "---",
-        f"id: example_{engram_name}_{idx}",
+        f"id: {example_id}",
         f"title: {title}",
         "uses:",
     ]
@@ -123,10 +131,19 @@ def _render_example_markdown(example: dict[str, Any], engram_name: str, idx: int
             f"updated_at: {today}",
             "---",
             "",
-            f"问题描述：{example.get('problem', '待补充')}",
-            f"评估过程：{example.get('assessment', '待补充')}",
-            f"最终方案：{example.get('plan', '待补充')}",
-            f"结果复盘：{example.get('review', '待补充')}",
+            f"# {title}",
+            "",
+            "## 背景",
+            problem,
+            "",
+            "## 评估过程",
+            assessment,
+            "",
+            "## 最终方案",
+            plan,
+            "",
+            "## 结果复盘",
+            review,
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
@@ -242,6 +259,7 @@ def build_engram_draft(
 
     example_items: list[dict[str, Any]] = [
         {
+            "id": f"example_{engram_name}_典型场景",
             "path": "examples/典型场景.md",
             "summary": f"{topic_value} 的典型用户场景与解决方案",
             "title": "典型场景",
