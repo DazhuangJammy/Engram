@@ -15,6 +15,7 @@
 - install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
 - 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
 - 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+- 当用户说"打开engram管理界面"，AI 调用 open_ui()
 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
@@ -28,6 +29,13 @@
 - 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
 - load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
 - 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 只要调用了工具（Skills / MCP / Subagent / 其他外部工具），都要记录工具轨迹：capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id)。
+- 工具调用失败也要记录，status 设为 `error`，result_summary 写清失败原因。
+- engram-server 内部多数 `name` 相关工具会自动写入 tool-trace；但外部工具不会自动写，必须显式调用 capture_tool_trace。
+- 去重规则：若本轮已记录过“同一 tool_name + 同一 intent”的轨迹，不重复写入。
+- 外部工具记录字段优先级：至少填写 `tool_name`、`intent`、`args_summary`、`result_summary`、`status`。
+- 范围规则：只有已 `load_engram(name, ...)` 的专家，才写入该 `name` 的工具轨迹，避免串专家记忆。
+- 交付前检查：若本轮发生过工具调用但未写任何轨迹，结束前补记至少一条 `capture_tool_trace`。
 - 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
 - 用户要求删除记忆 -> delete_memory(name, category, summary)
 - 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
@@ -62,3 +70,4 @@
 - 多案例命中时，先按 tags 匹配，再参考 updated_at 选更近的案例。
 - 回复中引用案例时优先带 title + id，减少歧义。
 - 若发现 frontmatter 缺字段或 uses 指向不存在文件，先修复再继续回答。
+

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,14 @@ def _result_text(result) -> str:
 
 
 async def _open_session(packs_dir: Path) -> ClientSession:
+    session_packs_dir = packs_dir
+    temp_ctx: tempfile.TemporaryDirectory[str] | None = None
+    if packs_dir.resolve() == FIXTURES.resolve():
+        temp_ctx = tempfile.TemporaryDirectory(prefix="engram-fixtures-")
+        isolated = Path(temp_ctx.name) / "packs"
+        shutil.copytree(packs_dir, isolated)
+        session_packs_dir = isolated
+
     server = StdioServerParameters(
         command=sys.executable,
         args=[
@@ -29,7 +39,7 @@ async def _open_session(packs_dir: Path) -> ClientSession:
             "engram_server.server",
             "serve",
             "--packs-dir",
-            str(packs_dir),
+            str(session_packs_dir),
         ],
         cwd=str(REPO_ROOT),
     )
@@ -42,12 +52,16 @@ async def _open_session(packs_dir: Path) -> ClientSession:
 
     session._test_stdio_ctx = stdio  # type: ignore[attr-defined]
     session._test_session_ctx = session_ctx  # type: ignore[attr-defined]
+    session._test_temp_ctx = temp_ctx  # type: ignore[attr-defined]
     return session
 
 
 async def _close_session(session: ClientSession) -> None:
     await session._test_session_ctx.__aexit__(None, None, None)  # type: ignore[attr-defined]
     await session._test_stdio_ctx.__aexit__(None, None, None)  # type: ignore[attr-defined]
+    temp_ctx = getattr(session, "_test_temp_ctx", None)
+    if temp_ctx is not None:
+        temp_ctx.cleanup()
 
 
 @pytest.mark.asyncio
@@ -232,6 +246,66 @@ async def test_capture_memory_and_load(tmp_path: Path) -> None:
     assert "## 动态记忆" in loaded
     assert "喜欢早上训练" in loaded
     assert "<memory>" in loaded
+
+
+@pytest.mark.asyncio
+async def test_capture_and_list_tool_traces(tmp_path: Path) -> None:
+    _setup_tmp_engram(tmp_path, "test-expert")
+    session = await _open_session(tmp_path)
+    try:
+        cap_result = _result_text(
+            await session.call_tool(
+                "capture_tool_trace",
+                {
+                    "name": "test-expert",
+                    "tool_name": "search_engrams",
+                    "intent": "查找法务专家",
+                    "result_summary": "命中2个候选",
+                    "status": "ok",
+                },
+            )
+        )
+        list_result = _result_text(
+            await session.call_tool(
+                "list_tool_traces",
+                {"name": "test-expert", "limit": 5},
+            )
+        )
+    finally:
+        await _close_session(session)
+
+    assert "已记录工具轨迹" in cap_result
+    assert "search_engrams [ok]" in cap_result
+    assert "最近工具调用轨迹" in list_result
+    assert "memory/tool-trace.md" in list_result
+    assert "查找法务专家" in list_result
+
+
+@pytest.mark.asyncio
+async def test_engram_tools_auto_capture_tool_trace(tmp_path: Path) -> None:
+    _setup_tmp_engram(tmp_path, "test-expert")
+    session = await _open_session(tmp_path)
+    try:
+        await session.call_tool(
+            "load_engram",
+            {"name": "test-expert", "query": "今天做什么训练"},
+        )
+        await session.call_tool(
+            "read_engram_file",
+            {"name": "test-expert", "path": "role.md"},
+        )
+        traces = _result_text(
+            await session.call_tool(
+                "list_tool_traces",
+                {"name": "test-expert", "limit": 20},
+            )
+        )
+    finally:
+        await _close_session(session)
+
+    assert "load_engram [ok]" in traces
+    assert "read_engram_file [ok]" in traces
+    assert "list_tool_traces" not in traces  # current call is appended after rendering
 
 
 @pytest.mark.asyncio

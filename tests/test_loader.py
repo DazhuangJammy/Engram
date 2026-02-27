@@ -214,6 +214,53 @@ def test_capture_memory_with_conversation_id(tmp_path: Path) -> None:
     assert "type:decision" in text
 
 
+def test_capture_tool_trace_creates_structured_memory(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+
+    ok = loader.capture_tool_trace(
+        "test-expert",
+        tool_name="search_engrams",
+        intent="查找营养相关专家",
+        result_summary="命中 3 个候选专家",
+        args_summary='query="nutrition"',
+        status="ok",
+    )
+    assert ok is True
+
+    trace_file = tmp_path / "test-expert" / "memory" / "tool-trace.md"
+    text = trace_file.read_text(encoding="utf-8")
+    assert "tool: search_engrams" in text
+    assert "intent: 查找营养相关专家" in text
+    assert "result: 命中 3 个候选专家" in text
+    assert "type:tool_trace" in text
+
+    index_text = (tmp_path / "test-expert" / "memory" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    assert "`memory/tool-trace.md`" in index_text
+    assert "search_engrams [ok]" in index_text
+
+
+def test_list_recent_memory_summaries_returns_latest_entries(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    for idx in range(3):
+        loader.capture_tool_trace(
+            "test-expert",
+            tool_name="read_engram_file",
+            intent=f"读取知识文件{idx}",
+            result_summary=f"读取成功{idx}",
+            status="ok",
+        )
+        loader._throttle_cache.clear()
+
+    latest_two = loader.list_recent_memory_summaries(
+        "test-expert", "tool-trace", limit=2
+    )
+    assert len(latest_two) == 2
+    assert "读取知识文件0" not in "\n".join(latest_two)
+    assert "读取知识文件2" in "\n".join(latest_two)
+
+
 def test_capture_memory_throttle(tmp_path: Path) -> None:
     loader = _make_engram(tmp_path)
     content = "用户膝盖有旧伤"

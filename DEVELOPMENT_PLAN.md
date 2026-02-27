@@ -57,7 +57,8 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
   └── read_engram_file(name, path)  ← 读取任意文件（知识、案例、记忆等，含 memory/_index_full.md）
 
 第三层：对话中写入（LLM 识别到重要信息时主动调用）
-  └── capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)  ← 捕获用户偏好、关键决定等
+  ├── capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)  ← 捕获用户偏好、关键决定等
+  └── capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, ...)  ← 记录工具调用轨迹（Skills/MCP/Subagent/外部工具）
 ```
 
 骨架常驻不丢，知识通过"索引内联摘要 + 全文按需"控制 token 消耗。
@@ -155,6 +156,8 @@ updated_at: 2026-02-26
 | `read_engram_file` | name, path | 读取任意文件（案例、知识等） |
 | `write_engram_file` | name, path, content, mode | 写入或追加文件到 Engram 包（用于自动打包） |
 | `capture_memory` | name, content, category, summary, memory_type, tags, conversation_id, expires, is_global | 对话中捕获用户偏好和关键信息，支持类型标注、标签、对话作用域、TTL过期、全局写入，30秒节流保护 |
+| `capture_tool_trace` | name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id | 结构化记录工具调用轨迹到 `memory/tool-trace.md`（成功与失败都可记录） |
+| `list_tool_traces` | name, limit | 查看最近工具轨迹摘要（来自 memory index） |
 | `consolidate_memory` | name, category, consolidated_content, summary | 将某个 category 的原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md` |
 | `delete_memory` | name, category, summary | 按摘要精确删除一条记忆，同时从索引和分类文件中移除 |
 | `correct_memory` | name, category, old_summary, new_content, new_summary, memory_type, tags | 修正已有记忆内容，更新索引和分类文件，支持重新指定类型和标签 |
@@ -166,6 +169,7 @@ updated_at: 2026-02-26
 | `stats_engrams` | format | 通过 MCP 获取统计，支持 plain/json/csv |
 | `create_engram_assistant` | mode, name?, topic?, audience?, style?, constraints?, language?, conversation? | 生成 Engram 草稿（from_conversation / guided） |
 | `finalize_engram_draft` | draft_json, name?, nested, confirm | 用户确认后落盘，并自动执行 lint |
+| `open_ui` | port? | 启动可视化管理界面，自动打开浏览器（默认端口 9470） |
 
 ### `load_engram` 返回内容格式
 
@@ -259,6 +263,7 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
 - install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
 - 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
 - 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+- 当用户说"打开engram管理界面"，AI 调用 open_ui()
 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
@@ -272,6 +277,13 @@ Agent 看到 `list_engrams` 返回的摘要，判断当前问题是否匹配某�
 - 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
 - load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
 - 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 只要调用了工具（Skills / MCP / Subagent / 其他外部工具），都要记录工具轨迹：capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id)。
+- 工具调用失败也要记录，status 设为 `error`，result_summary 写清失败原因。
+- engram-server 内部多数 `name` 相关工具会自动写入 tool-trace；但外部工具不会自动写，必须显式调用 capture_tool_trace。
+- 去重规则：若本轮已记录过“同一 tool_name + 同一 intent”的轨迹，不重复写入。
+- 外部工具记录字段优先级：至少填写 `tool_name`、`intent`、`args_summary`、`result_summary`、`status`。
+- 范围规则：只有已 `load_engram(name, ...)` 的专家，才写入该 `name` 的工具轨迹，避免串专家记忆。
+- 交付前检查：若本轮发生过工具调用但未写任何轨迹，结束前补记至少一条 `capture_tool_trace`。
 - 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
 - 用户要求删除记忆 -> delete_memory(name, category, summary)
 - 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
@@ -321,6 +333,11 @@ server 内置了 `engram-system-prompt` prompt，会动态生成包含所有可�
 engram-mcp-server/
 ├── pyproject.toml
 ├── README.md
+├── evaluation/
+│   ├── README.md               # 英文评测说明
+│   ├── README_zh.md            # 中文评测说明
+│   ├── case_study_template.json
+│   └── score_case_study.py     # 多维规则评测脚本（content/safety/structure + checkpoints）
 ├── DEVELOPMENT_PLAN.md          # 本文件
 ├── src/
 │   └── engram_server/
@@ -331,6 +348,11 @@ engram-mcp-server/
 │       ├── registry.py          # registry 拉取/搜索/名称解析
 │       ├── creator.py           # 创建助手：草稿生成与落盘
 │       ├── stats.py             # 统计数据收集 + 纯文本/Rich 双模式渲染
+│       ├── web.py               # Web UI：Starlette REST API + 静态文件服务
+│       ├── static/              # Web UI 前端静态文件
+│       │   ├── index.html
+│       │   ├── style.css
+│       │   └── app.js
 │       └── templates/           # engram-server init 模板
 │           ├── meta.json
 │           ├── role.md
@@ -348,6 +370,7 @@ engram-mcp-server/
 │   ├── test_lint.py
 │   ├── test_registry.py
 │   ├── test_create_assistant.py
+│   ├── test_evaluation.py
 │   └── test_auto_routing.py
 └── .claude/
     └── engram/
@@ -361,6 +384,8 @@ engram-mcp-server/
 ```
 mcp              # MCP SDK（Python），提供 server 框架
 rich>=13.0       # 终端渲染（stats --tui 面板）
+starlette        # Web UI HTTP 服务框架
+uvicorn          # ASGI 服务器（Web UI 运行时）
 ```
 
 零外部依赖（无向量数据库、无 embedding 模型）。
@@ -420,6 +445,7 @@ engram-server install <git-url|name>     # 从 git 或 registry 安装 Engram �
 engram-server init <name> [--nested]     # 从模板创建新 Engram 包（可选二级索引）
 engram-server lint [name]                # 一致性校验（error=1, warning=0）
 engram-server stats [--json|--csv|--tui] # 查看/导出统计
+engram-server ui [--port N] [--no-open]  # 启动可视化管理界面
 ```
 
 ---
@@ -537,6 +563,23 @@ engram-server stats [--json|--csv|--tui] # 查看/导出统计
 - 项目级自动初始化：首次运行自动创建 `./.claude/engram/`
 - 自动注入双起始包：`starter-complete`（完整示例）+ `starter-template`（说明模板）
 - MCP 工具（install/init/finalize）默认写入当前项目目录，降低“换项目后没包可用”的门槛
+
+### 已完成（v1.3.0）
+
+- 工具轨迹自动记忆：`name` 相关核心 MCP 工具调用自动写入 `memory/tool-trace.md`
+- 新增轨迹工具：`capture_tool_trace` / `list_tool_traces`（外部工具轨迹可显式记录）
+- registry 多源合并：内置 + 远端 + 用户级 `~/.engram/registry.local.json` + 项目级 `./.claude/engram/registry.local.json`
+- 评测体系升级：`evaluation/score_case_study.py` 支持 content/safety/structure 多维评分与 weighted checkpoints
+- 回归稳定性修复：`serve --packs-dir` 在默认全局、项目路径、显式路径下写入行为更一致；测试隔离避免 fixture 污染
+
+### 已完成（v1.4.0）
+
+- 内置 Web UI：可视化管理界面，浏览器中浏览/编辑 Engram 包
+- `open_ui` MCP 工具：对话中说"打开管理界面"即可自动启动浏览器
+- `engram-server ui` CLI 命令：独立运行 Web UI，不依赖 Claude Code
+- 暗色主题 SPA：卡片式 Engram 列表、文件树 + 内联编辑器、统计面板
+- 快捷键支持：Cmd+S / Ctrl+S 保存文件
+- 新增依赖：`starlette`、`uvicorn`（Web UI 运行时）
 
 ### 远期（P2）
 

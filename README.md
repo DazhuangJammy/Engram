@@ -37,11 +37,13 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 ## 功能特性
 
 - 零向量依赖：不使用 chromadb / litellm，只依赖 `mcp`
-- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`delete_memory`、`correct_memory`、`add_knowledge`、`install_engram`、`init_engram`、`lint_engrams`、`search_engrams`、`stats_engrams`、`create_engram_assistant`、`finalize_engram_draft`
+- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`capture_tool_trace`、`list_tool_traces`、`consolidate_memory`、`delete_memory`、`correct_memory`、`add_knowledge`、`install_engram`、`init_engram`、`lint_engrams`、`search_engrams`、`stats_engrams`、`create_engram_assistant`、`finalize_engram_draft`、`open_ui`
+- 可视化管理界面：内置 Web UI，浏览器中浏览/编辑 Engram，支持对话触发或独立运行
 - 索引驱动加载：
   - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引 + 全局用户记忆
   - `read_engram_file` 按路径按需读取知识或案例全文
 - 动态记忆：对话中自动捕获用户偏好和关键信息，下次加载时自动带入
+- 工具轨迹记忆：`name` 相关 MCP 工具调用会自动写入 `memory/tool-trace.md`，外部工具可用 `capture_tool_trace` 补充
 - 全局用户记忆：跨专家共享的用户基础信息（年龄、城市等），所有 Engram 加载时自动附加
 - 记忆 TTL：支持 `expires` 字段，到期记忆自动归档到 `{category}-expired.md` 并隐藏
 - Index 分层：`_index.md` 只保留最近50条（热层），完整记录写入 `_index_full.md`（冷层）
@@ -49,6 +51,7 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 - 冷启动引导：`rules.md` 支持 `## Onboarding` 区块，首次使用时自动触发信息收集
 - CLI 命令：`serve` / `list` / `search` / `install` / `init` / `lint` / `stats`
 - 统计面板：`engram-server stats` 支持纯文本 / `--json` / `--csv` / `--tui`
+- 评测模板：`evaluation/` 提供可复现实验（同模型 baseline vs Engram）与自动评分脚本（content/safety/structure + checkpoints）
 
 ## 设计理念：索引驱动的分层懒加载
 
@@ -170,6 +173,7 @@ claude mcp remove --scope user engram-server
 - install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
 - 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
 - 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+- 当用户说"打开engram管理界面"，AI 调用 open_ui()
 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
@@ -183,6 +187,13 @@ claude mcp remove --scope user engram-server
 - 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
 - load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
 - 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 只要调用了工具（Skills / MCP / Subagent / 其他外部工具），都要记录工具轨迹：capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id)。
+- 工具调用失败也要记录，status 设为 `error`，result_summary 写清失败原因。
+- engram-server 内部多数 `name` 相关工具会自动写入 tool-trace；但外部工具不会自动写，必须显式调用 capture_tool_trace。
+- 去重规则：若本轮已记录过“同一 tool_name + 同一 intent”的轨迹，不重复写入。
+- 外部工具记录字段优先级：至少填写 `tool_name`、`intent`、`args_summary`、`result_summary`、`status`。
+- 范围规则：只有已 `load_engram(name, ...)` 的专家，才写入该 `name` 的工具轨迹，避免串专家记忆。
+- 交付前检查：若本轮发生过工具调用但未写任何轨迹，结束前补记至少一条 `capture_tool_trace`。
 - 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
 - 用户要求删除记忆 -> delete_memory(name, category, summary)
 - 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
@@ -225,6 +236,35 @@ claude mcp remove --scope user engram-server
 - `./.claude/engram/starter-complete`（完整示例 Engram，可直接加载）
 - `./.claude/engram/starter-template`（说明/模板 Engram，用于改造）
 - 两个起始包的 `workflow.md` 都已内置提醒：可在决策节点主动调用 MCP 工具或 Skills
+
+## 可视化管理界面（Web UI）
+
+Engram 提供内置的可视化管理界面，可以在浏览器中浏览、编辑和管理所有 Engram 包。
+
+### 方式一：对话中打开（推荐）
+
+在 Claude Code 对话中直接说"打开管理界面"，AI 会自动调用 `open_ui` 工具，浏览器自动弹出。
+
+### 方式二：独立运行（不依赖 Claude Code）
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server ui
+```
+
+可选参数：
+
+```bash
+# 指定端口
+engram-server ui --port 8080
+
+# 不自动打开浏览器
+engram-server ui --no-open
+
+# 指定 Engram 目录
+engram-server ui --packs-dir ~/.engram
+```
+
+> 独立运行同样不需要安装任何额外依赖，`uvx` 会自动处理。
 
 ## CLI 用法
 
@@ -310,7 +350,7 @@ uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
 > # 之后直接用：engram stats / engram stats --tui / engram list
 > ```
 
-### 新功能怎么用（v0.9.0 / v1.0.0 / v1.1.0）
+### 新功能怎么用（v0.9.0 / v1.0.0 / v1.1.0 / v1.3.0）
 
 1) 数据校验（lint）
 
@@ -346,6 +386,12 @@ engram-server install fitness-coach --packs-dir ~/.engram
 - 若本地无对应目录，再按 registry 的 `source` 安装
 - 若 registry 的 `source` clone 失败，会自动回退到主仓库 `examples/<name>`
 
+registry 条目支持本地覆盖（后者优先）：
+- 内置：仓库根目录 `registry.json`
+- 远端：主仓库在线 `registry.json`
+- 用户级覆盖：`~/.engram/registry.local.json`
+- 项目级覆盖：`./.claude/engram/registry.local.json`
+
 ### 如何向本项目提交 Engram（PR）
 
 1. Fork 本仓库并新建分支。
@@ -369,6 +415,19 @@ filename = "训练基础/深蹲模式"
 ```
 
 系统会写入 `knowledge/训练基础/深蹲模式.md`；若 `knowledge/训练基础/_index.md` 存在，则优先追加到子索引。
+
+6) 案例评测（evaluation）
+
+```bash
+# 复制模板并填写 baseline/engram 回答
+cp evaluation/case_study_template.json evaluation/my_case_study.json
+
+# 执行多维评测
+python3 evaluation/score_case_study.py --input evaluation/my_case_study.json
+
+# 可选导出 CSV
+python3 evaluation/score_case_study.py --input evaluation/my_case_study.json --csv evaluation/my_case_study_report.csv
+```
 
 ### 傻瓜式创建 Engram（双模式）
 
@@ -402,6 +461,8 @@ filename = "训练基础/深蹲模式"
 | `read_engram_file` | `name`, `path` | 按需读取单个文件（含路径越界保护） |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | 写入或追加文件到 Engram 包（用于自动打包） |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id`, `expires`, `is_global` | 对话中捕获用户偏好和关键信息，支持类型标注、标签、TTL过期、全局写入 |
+| `capture_tool_trace` | `name`, `tool_name`, `intent`, `result_summary`, `args_summary`, `status`, `summary`, `tags`, `conversation_id` | 结构化记录工具调用轨迹到 `memory/tool-trace.md`，用于后续 workflow 推荐 |
+| `list_tool_traces` | `name`, `limit` | 读取最近工具调用轨迹摘要（来自记忆索引） |
 | `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | 将某个 category 的原始条目压缩为密集摘要，原始条目归档至 `{category}-archive.md` |
 | `delete_memory` | `name`, `category`, `summary` | 按摘要精确删除一条记忆，同时从索引和分类文件中移除 |
 | `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | 修正一条已有记忆的内容，更新索引和分类文件 |
@@ -413,6 +474,7 @@ filename = "训练基础/深蹲模式"
 | `stats_engrams` | `format` | 通过 MCP 获取统计，`format` 支持 `plain/json/csv` |
 | `create_engram_assistant` | `mode`, `name?`, `topic?`, `audience?`, `style?`, `constraints?`, `language?`, `conversation?` | 生成 Engram 草稿（from_conversation / guided），缺失字段可自动补全并标注 |
 | `finalize_engram_draft` | `draft_json`, `name?`, `nested`, `confirm` | 用户确认后落盘创建 Engram，并自动执行 lint 校验 |
+| `open_ui` | `port?` | 启动可视化管理界面，自动打开浏览器（默认端口 9470） |
 
 ### `load_engram` 返回内容格式
 
@@ -879,6 +941,7 @@ updated_at: 2026-02-26
 - install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
 - 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
 - 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+- 当用户说"打开engram管理界面"，AI 调用 open_ui()
 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
@@ -892,6 +955,13 @@ updated_at: 2026-02-26
 - 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
 - load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
 - 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 只要调用了工具（Skills / MCP / Subagent / 其他外部工具），都要记录工具轨迹：capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id)。
+- 工具调用失败也要记录，status 设为 `error`，result_summary 写清失败原因。
+- engram-server 内部多数 `name` 相关工具会自动写入 tool-trace；但外部工具不会自动写，必须显式调用 capture_tool_trace。
+- 去重规则：若本轮已记录过“同一 tool_name + 同一 intent”的轨迹，不重复写入。
+- 外部工具记录字段优先级：至少填写 `tool_name`、`intent`、`args_summary`、`result_summary`、`status`。
+- 范围规则：只有已 `load_engram(name, ...)` 的专家，才写入该 `name` 的工具轨迹，避免串专家记忆。
+- 交付前检查：若本轮发生过工具调用但未写任何轨迹，结束前补记至少一条 `capture_tool_trace`。
 - 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
 - 用户要求删除记忆 -> delete_memory(name, category, summary)
 - 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
@@ -1075,6 +1145,22 @@ pytest -q
 - 项目级自动初始化：首次运行自动创建 `./.claude/engram/`
 - 自动注入双起始包：`starter-complete`（完整示例）+ `starter-template`（说明模板）
 - MCP 工具（`install_engram` / `init_engram` / `finalize_engram_draft`）默认写入当前项目目录
+
+### 已完成（v1.3.0）
+
+- 工具轨迹自动记忆：`name` 相关核心 MCP 工具调用会自动写入 `memory/tool-trace.md`
+- 新增轨迹工具：`capture_tool_trace` / `list_tool_traces`，可记录并回看 Skills / MCP / Subagent / 外部工具调用过程
+- registry 多源合并与覆盖：支持用户级、项目级 `registry.local.json` 覆盖
+- 评测能力升级：`evaluation/score_case_study.py` 支持 content/safety/structure 多维评分与 weighted checkpoints
+- `serve --packs-dir` 写入路径策略优化，显式路径、项目路径、默认全局路径行为更一致
+
+### 已完成（v1.4.0）
+
+- 内置 Web UI：可视化管理界面，浏览器中浏览/编辑 Engram 包
+- `open_ui` MCP 工具：对话中说"打开管理界面"即可自动启动浏览器
+- `engram-server ui` CLI 命令：独立运行 Web UI，不依赖 Claude Code
+- 暗色主题 SPA：卡片式 Engram 列表、文件树 + 内联编辑器、统计面板
+- 快捷键支持：Cmd+S / Ctrl+S 保存文件
 
 ### 计划中
 

@@ -222,6 +222,8 @@ source = { editable = "." }
 dependencies = [
     { name = "mcp" },
     { name = "rich" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -236,6 +238,8 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "rich", specifier = ">=13.0" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 provides-extras = ["dev"]
 

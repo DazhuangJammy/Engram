@@ -19,7 +19,13 @@ from engram_server.creator import (
 )
 from engram_server.lint import lint_engram
 from engram_server.loader import EngramLoader
-from engram_server.registry import fetch_registry, resolve_name, search_registry
+from engram_server.registry import (
+    fetch_registry,
+    load_registry_file,
+    merge_registry_entries,
+    resolve_name,
+    search_registry,
+)
 
 DEFAULT_PACKS_DIR = Path("~/.engram").expanduser()
 _PROJECT_BOOTSTRAP_COMPLETE_NAME = "starter-complete"
@@ -88,19 +94,19 @@ def _is_url_source(source: str) -> bool:
 
 
 def _load_registry_entries() -> list[dict]:
-    remote = fetch_registry()
-    if remote:
-        return remote
-
     local_registry = Path(__file__).resolve().parents[2] / "registry.json"
-    if local_registry.is_file():
-        try:
-            raw = json.loads(local_registry.read_text(encoding="utf-8"))
-            if isinstance(raw, list):
-                return [item for item in raw if isinstance(item, dict)]
-        except (OSError, json.JSONDecodeError):
-            return []
-    return []
+    built_in_entries = load_registry_file(local_registry)
+    remote_entries = fetch_registry()
+    user_override_entries = load_registry_file(Path("~/.engram/registry.local.json"))
+    project_override_entries = load_registry_file(
+        _project_engram_dir() / "registry.local.json"
+    )
+    return merge_registry_entries(
+        built_in_entries,
+        remote_entries,
+        user_override_entries,
+        project_override_entries,
+    )
 
 
 def _render_search_item(entry: dict) -> str:
@@ -580,17 +586,63 @@ def _build_engram_system_prompt(engrams: list[dict]) -> str:
         "   expires 可选：ISO日期字符串，如 '2026-06-01'，到期后自动归档到 {category}-expired.md 并隐藏\n"
         "   is_global=True：写入跨专家共享的全局记忆（如用户年龄、城市等基础信息）\n"
         "   tags 可选：用于分类过滤，如 [\"fitness\", \"injury\"]\n"
-        "7. 下次加载同一专家时，动态记忆和全局记忆会自动带入，无需用户重复说明\n"
-        "8. 当某个 category 的记忆条目超过 30 条时，先用 read_engram_file 读取原始内容，\n"
+        "7. 任何工具调用（Skills / MCP / Subagent / 第三方工具）完成后，\n"
+        "   立即调用 capture_tool_trace(name, tool_name, intent, result_summary, ...)\n"
+        "   记录：调用了什么、为什么调用、结果如何；失败也要记录（status=error）\n"
+        "8. engram-server 内部的关键工具（load/read/write/memory/knowledge）会自动写入 tool-trace，\n"
+        "   但外部工具仍需你显式调用 capture_tool_trace 记录\n"
+        "9. 下次加载同一专家时，动态记忆和全局记忆会自动带入，无需用户重复说明\n"
+        "10. 当某个 category 的记忆条目超过 30 条时，先用 read_engram_file 读取原始内容，\n"
         "   再调用 consolidate_memory(name, category, consolidated_content, summary)\n"
         "   将多条原始记录压缩为一条密集摘要，原始条目自动归档\n"
-        "9. 若加载后看到「首次引导」区块，请在对话中自然地收集所列信息并 capture_memory\n"
-        "10. 若 Engram 有「继承知识索引」区块，其知识来自父 Engram，可按需 read_engram_file 读取\n"
+        "11. 若加载后看到「首次引导」区块，请在对话中自然地收集所列信息并 capture_memory\n"
+        "12. 若 Engram 有「继承知识索引」区块，其知识来自父 Engram，可按需 read_engram_file 读取\n"
     )
 
 
 def create_mcp_app(loader: EngramLoader, packs_dir: Path) -> FastMCP:
     app = FastMCP(name="engram-server")
+
+    def _compact_text(value: object, *, max_len: int = 120) -> str:
+        text = " ".join(str(value).split())
+        if len(text) <= max_len:
+            return text
+        return f"{text[: max_len - 1]}…"
+
+    def _auto_capture_tool_trace(
+        name: str,
+        *,
+        tool_name: str,
+        intent: str,
+        result_summary: str,
+        args_summary: str = "",
+        status: str = "ok",
+        tags: list[str] | None = None,
+    ) -> None:
+        if not name.strip() or not _engram_exists(loader, name):
+            return
+
+        base_tags = ["auto", "source:mcp", f"mcp_tool:{tool_name}"]
+        merged_tags = base_tags + [t for t in (tags or []) if str(t).strip()]
+        deduped_tags: list[str] = []
+        seen: set[str] = set()
+        for tag in merged_tags:
+            normalized = str(tag).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped_tags.append(normalized)
+
+        loader.capture_tool_trace(
+            name=name,
+            tool_name=tool_name,
+            intent=_compact_text(intent),
+            result_summary=_compact_text(result_summary),
+            args_summary=_compact_text(args_summary),
+            status=_compact_text(status, max_len=24).lower() or "ok",
+            tags=deduped_tags,
+            summary=f"{tool_name} [{status.strip().lower() or 'ok'}] {_compact_text(intent, max_len=72)}",
+        )
 
     @app.prompt(
         name="engram-system-prompt",
@@ -620,7 +672,15 @@ call read_engram_file(name, path) to fetch specific knowledge or case files."""
         info = loader.get_engram_info(name)
         if info is None:
             return f"未找到 Engram: {name}"
-        return json.dumps(info, ensure_ascii=False, indent=2)
+        payload = json.dumps(info, ensure_ascii=False, indent=2)
+        _auto_capture_tool_trace(
+            name,
+            tool_name="get_engram_info",
+            intent="查看专家元信息",
+            result_summary="读取 meta.json 成功",
+            args_summary=f"name={name}",
+        )
+        return payload
 
     @app.tool()
     def load_engram(name: str, query: str) -> str:
@@ -634,17 +694,41 @@ specific knowledge or case files selected from the indexes."""
 
         base = loader.load_engram_base(name)
         if base is None:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="load_engram",
+                intent="加载专家上下文",
+                result_summary="加载失败：无法读取基础层",
+                args_summary=f"query={query}",
+                status="error",
+            )
             return f"未找到 Engram: {name}"
         if not base.strip():
+            _auto_capture_tool_trace(
+                name,
+                tool_name="load_engram",
+                intent="加载专家上下文",
+                result_summary="加载失败：没有可用上下文",
+                args_summary=f"query={query}",
+                status="error",
+            )
             return f"Engram {name} 没有可用上下文。"
 
-        return (
+        result = (
             f"# 已加载 Engram: {name}\n\n"
             f"## 用户关注方向\n{query}\n\n"
             f"{base}\n\n"
             "## 下一步\n"
             "请查看知识索引中的摘要，按需调用 read_engram_file(name, path) 读取完整知识或案例。"
         )
+        _auto_capture_tool_trace(
+            name,
+            tool_name="load_engram",
+            intent=f"加载专家上下文（query: {query}）",
+            result_summary="成功加载 role/workflow/rules 与索引",
+            args_summary=f"query={query}",
+        )
+        return result
 
     @app.tool()
     def read_engram_file(name: str, path: str) -> str:
@@ -658,10 +742,31 @@ is blocked."""
 
         content = loader.load_file(name, path)
         if content is None:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="read_engram_file",
+                intent=f"读取文件 {path}",
+                result_summary=f"读取失败：文件不存在 {path}",
+                args_summary=f"path={path}",
+                status="error",
+            )
             return f"未找到文件: {path}"
         if not content.strip():
+            _auto_capture_tool_trace(
+                name,
+                tool_name="read_engram_file",
+                intent=f"读取文件 {path}",
+                result_summary=f"读取成功但文件为空 {path}",
+                args_summary=f"path={path}",
+            )
             return f"文件为空: {path}"
-
+        _auto_capture_tool_trace(
+            name,
+            tool_name="read_engram_file",
+            intent=f"读取文件 {path}",
+            result_summary="读取成功",
+            args_summary=f"path={path}",
+        )
         return f"## {path}\n{content.strip()}"
 
     @app.tool()
@@ -859,8 +964,23 @@ Path traversal outside the Engram directory is blocked."""
         append = mode == "append"
         ok = loader.write_file(name, path, content, append=append)
         if not ok:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="write_engram_file",
+                intent=f"{'追加' if append else '写入'}文件 {path}",
+                result_summary=f"写入失败: {path}",
+                args_summary=f"mode={mode}, path={path}",
+                status="error",
+            )
             return f"写入失败: {path}"
         action = "追加" if append else "写入"
+        _auto_capture_tool_trace(
+            name,
+            tool_name="write_engram_file",
+            intent=f"{action}文件 {path}",
+            result_summary=f"写入成功: {path}",
+            args_summary=f"mode={mode}, path={path}",
+        )
         return f"已{action}: {path}"
 
     @app.tool()
@@ -910,11 +1030,95 @@ Args:
             is_global=is_global,
         )
         if not ok:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="capture_memory",
+                intent=f"记录记忆 [{category}]",
+                result_summary=f"记忆写入失败: {summary}",
+                args_summary=f"category={category}, type={memory_type}, is_global={is_global}",
+                status="error",
+            )
             return f"记忆捕获失败: {category}"
         scope = "[全局] " if is_global else ""
         type_label = f"[{memory_type}] " if memory_type != "general" else ""
         expires_label = f" (expires:{expires})" if expires else ""
+        _auto_capture_tool_trace(
+            name,
+            tool_name="capture_memory",
+            intent=f"记录记忆 [{category}]",
+            result_summary=f"已记录: {summary}",
+            args_summary=f"category={category}, type={memory_type}, is_global={is_global}",
+            tags=[f"memory_category:{category}"],
+        )
         return f"已记录: {scope}{type_label}[{category}] {summary}{expires_label}"
+
+    @app.tool()
+    def capture_tool_trace(
+        name: str,
+        tool_name: str,
+        intent: str,
+        result_summary: str,
+        args_summary: str = "",
+        status: str = "ok",
+        summary: str | None = None,
+        tags: list[str] | None = None,
+        conversation_id: str | None = None,
+    ) -> str:
+        """Capture one tool execution trace for later workflow recommendations.
+
+Use this when you call an MCP tool or external tool and want to remember:
+what was called, why it was called, and what happened.
+Stored to memory/tool-trace.md as memory_type=tool_trace."""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        ok = loader.capture_tool_trace(
+            name=name,
+            tool_name=tool_name,
+            intent=intent,
+            result_summary=result_summary,
+            args_summary=args_summary,
+            status=status,
+            summary=summary,
+            tags=tags,
+            conversation_id=conversation_id,
+        )
+        if not ok:
+            return "工具轨迹记录失败，请检查 tool_name/intent/result_summary 是否为空。"
+        return f"已记录工具轨迹: {tool_name} [{status.strip().lower() or 'ok'}] {intent}"
+
+    @app.tool()
+    def list_tool_traces(name: str, limit: int = 10) -> str:
+        """List recent tool execution traces from memory index."""
+        if not _engram_exists(loader, name):
+            return f"未找到 Engram: {name}"
+
+        normalized_limit = max(1, min(limit, 50))
+        traces = loader.list_recent_memory_summaries(
+            name,
+            "tool-trace",
+            limit=normalized_limit,
+        )
+        if not traces:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="list_tool_traces",
+                intent="查看最近工具轨迹",
+                result_summary="当前没有工具轨迹",
+                args_summary=f"limit={normalized_limit}",
+            )
+            return "暂无工具调用轨迹"
+
+        lines = [f"最近工具调用轨迹（{len(traces)} 条）"]
+        lines.extend(f"- {line}" for line in traces)
+        _auto_capture_tool_trace(
+            name,
+            tool_name="list_tool_traces",
+            intent="查看最近工具轨迹",
+            result_summary=f"返回 {len(traces)} 条工具轨迹",
+            args_summary=f"limit={normalized_limit}",
+        )
+        return "\n".join(lines)
 
     @app.tool()
     def consolidate_memory(
@@ -943,7 +1147,24 @@ Args:
 
         ok = loader.consolidate_memory(name, category, consolidated_content, summary)
         if not ok:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="consolidate_memory",
+                intent=f"压缩记忆 [{category}]",
+                result_summary=f"压缩失败: {summary}",
+                args_summary=f"category={category}",
+                status="error",
+                tags=[f"memory_category:{category}"],
+            )
             return f"记忆压缩失败: {category}"
+        _auto_capture_tool_trace(
+            name,
+            tool_name="consolidate_memory",
+            intent=f"压缩记忆 [{category}]",
+            result_summary=f"压缩成功: {summary}",
+            args_summary=f"category={category}",
+            tags=[f"memory_category:{category}"],
+        )
         return f"已压缩: [{category}] 原始条目已归档至 memory/{category}-archive.md"
 
     @app.tool()
@@ -958,7 +1179,24 @@ The entry is removed from both the index and the category file."""
 
         ok = loader.delete_memory(name, category, summary)
         if not ok:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="delete_memory",
+                intent=f"删除记忆 [{category}]",
+                result_summary=f"未找到匹配条目: {summary}",
+                args_summary=f"category={category}",
+                status="error",
+                tags=[f"memory_category:{category}"],
+            )
             return f"未找到匹配的记忆条目: [{category}] {summary}"
+        _auto_capture_tool_trace(
+            name,
+            tool_name="delete_memory",
+            intent=f"删除记忆 [{category}]",
+            result_summary=f"删除成功: {summary}",
+            args_summary=f"category={category}",
+            tags=[f"memory_category:{category}"],
+        )
         return f"已删除: [{category}] {summary}"
 
     @app.tool()
@@ -995,8 +1233,25 @@ Args:
             tags=tags,
         )
         if not ok:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="correct_memory",
+                intent=f"修正记忆 [{category}]",
+                result_summary=f"修正失败: {old_summary}",
+                args_summary=f"category={category}, type={memory_type}",
+                status="error",
+                tags=[f"memory_category:{category}"],
+            )
             return f"未找到匹配的记忆条目: [{category}] {old_summary}"
         type_label = f"[{memory_type}] " if memory_type != "general" else ""
+        _auto_capture_tool_trace(
+            name,
+            tool_name="correct_memory",
+            intent=f"修正记忆 [{category}]",
+            result_summary=f"修正成功: {new_summary}",
+            args_summary=f"category={category}, type={memory_type}",
+            tags=[f"memory_category:{category}"],
+        )
         return f"已修正: {type_label}[{category}] {new_summary}"
 
     @app.tool()
@@ -1018,15 +1273,56 @@ Args:
 
         ok = loader.add_knowledge(name, filename, content, summary)
         if not ok:
+            _auto_capture_tool_trace(
+                name,
+                tool_name="add_knowledge",
+                intent=f"新增知识 {filename}",
+                result_summary=f"写入失败: knowledge/{filename}",
+                args_summary=f"filename={filename}",
+                status="error",
+            )
             return f"写入失败: knowledge/{filename}"
         fn = filename if filename.endswith(".md") else f"{filename}.md"
+        _auto_capture_tool_trace(
+            name,
+            tool_name="add_knowledge",
+            intent=f"新增知识 {fn}",
+            result_summary=f"写入成功: knowledge/{fn}",
+            args_summary=f"filename={filename}",
+        )
         return f"已添加知识: knowledge/{fn} — {summary}"
+
+    @app.tool()
+    def open_ui(port: int = 9470) -> str:
+        """Open the Engram visual management UI in the browser.
+
+Call this when the user wants to visually browse, edit, or manage their Engram packs.
+Starts a local HTTP server and opens the browser automatically.
+
+Args:
+    port: HTTP port (default 9470)"""
+        import threading
+        import webbrowser
+
+        from engram_server.web import create_web_app
+
+        web_app = create_web_app(packs_dir)
+
+        def _serve() -> None:
+            import uvicorn
+            uvicorn.run(web_app, host="127.0.0.1", port=port, log_level="warning")
+
+        t = threading.Thread(target=_serve, daemon=True)
+        t.start()
+        url = f"http://localhost:{port}"
+        webbrowser.open(url)
+        return f"Engram UI 已启动: {url}"
 
     return app
 
 
 def run_server(packs_dir: Path) -> None:
-    packs_dir = packs_dir.expanduser()
+    packs_dir = packs_dir.expanduser().resolve()
     packs_dir.mkdir(parents=True, exist_ok=True)
     project_packs = _ensure_project_engram_workspace()
 
@@ -1035,7 +1331,12 @@ def run_server(packs_dir: Path) -> None:
         packs_dir=loader_roots,
         default_packs_dir=packs_dir,
     )
-    app = create_mcp_app(loader=loader, packs_dir=project_packs)
+    default_global = DEFAULT_PACKS_DIR.expanduser().resolve()
+    cwd = Path.cwd().resolve()
+    project_engram_from_cwd = (cwd / ".claude" / "engram").resolve()
+    project_scoped_override = packs_dir in {cwd, project_engram_from_cwd}
+    write_target = project_packs if (packs_dir == default_global or project_scoped_override) else packs_dir
+    app = create_mcp_app(loader=loader, packs_dir=write_target)
     app.run(transport="stdio")
 
 
@@ -1079,6 +1380,11 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser = subparsers.add_parser("search", help="Search Engrams from registry")
     search_parser.add_argument("query")
     search_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
+
+    ui_parser = subparsers.add_parser("ui", help="Open Engram visual management UI in browser")
+    ui_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
+    ui_parser.add_argument("--port", type=int, default=9470, help="HTTP port (default 9470)")
+    ui_parser.add_argument("--no-open", action="store_true", help="Don't auto-open browser")
 
     return parser
 
@@ -1193,6 +1499,16 @@ def main(argv: list[str] | None = None) -> None:
             return
         for item in matched:
             print(_render_search_item(item))
+        return
+
+    if args.command == "ui":
+        from engram_server.web import run_ui
+
+        run_ui(
+            packs_dir=Path(args.packs_dir),
+            port=args.port,
+            open_browser=not args.no_open,
+        )
         return
 
     parser.print_help()

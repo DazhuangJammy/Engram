@@ -35,11 +35,13 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 ## Features
 
 - Zero vector dependencies: no chromadb / litellm, only depends on `mcp`
-- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `delete_memory`, `correct_memory`, `add_knowledge`, `install_engram`, `init_engram`, `lint_engrams`, `search_engrams`, `stats_engrams`, `create_engram_assistant`, `finalize_engram_draft`
+- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `capture_tool_trace`, `list_tool_traces`, `consolidate_memory`, `delete_memory`, `correct_memory`, `add_knowledge`, `install_engram`, `init_engram`, `lint_engrams`, `search_engrams`, `stats_engrams`, `create_engram_assistant`, `finalize_engram_draft`, `open_ui`
+- Visual management UI: built-in Web UI for browsing/editing Engrams in the browser, triggered from conversation or run standalone
 - Index-driven loading:
   - `load_engram` returns role/workflow/rules + knowledge index + examples index + dynamic memory index + global user memory
   - `read_engram_file` reads full knowledge or example files on demand
 - Dynamic memory: automatically captures user preferences and key information during conversation, loaded on next session
+- Tool trace memory: `name`-scoped MCP tool calls auto-write to `memory/tool-trace.md`; external tools can be captured via `capture_tool_trace`
 - Global user memory: cross-Engram shared user info (age, city, etc.) auto-attached to every `load_engram`
 - Memory TTL: `expires` archives stale memories to `{category}-expired.md` and hides them from loads
 - Tiered index: `_index.md` keeps last 50 entries (hot layer); full history in `_index_full.md` (cold layer)
@@ -47,6 +49,7 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 - Cold-start onboarding: `## Onboarding` block in `rules.md` triggers first-session info collection
 - CLI commands: `serve` / `list` / `search` / `install` / `init` / `lint` / `stats`
 - Stats dashboard: `engram-server stats` supports plain text / `--json` / `--csv` / `--tui`
+- Case-study evaluation template: `evaluation/` includes a reproducible baseline-vs-Engram scoring script (content/safety/structure + checkpoints)
 
 ## Design Philosophy: Index-Driven Layered Lazy Loading
 
@@ -168,6 +171,7 @@ Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude 
 - install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
 - 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
 - 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+- 当用户说"打开engram管理界面"，AI 调用 open_ui()
 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
@@ -181,6 +185,13 @@ Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude 
 - 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
 - load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
 - 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 只要调用了工具（Skills / MCP / Subagent / 其他外部工具），都要记录工具轨迹：capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id)。
+- 工具调用失败也要记录，status 设为 `error`，result_summary 写清失败原因。
+- engram-server 内部多数 `name` 相关工具会自动写入 tool-trace；但外部工具不会自动写，必须显式调用 capture_tool_trace。
+- 去重规则：若本轮已记录过“同一 tool_name + 同一 intent”的轨迹，不重复写入。
+- 外部工具记录字段优先级：至少填写 `tool_name`、`intent`、`args_summary`、`result_summary`、`status`。
+- 范围规则：只有已 `load_engram(name, ...)` 的专家，才写入该 `name` 的工具轨迹，避免串专家记忆。
+- 交付前检查：若本轮发生过工具调用但未写任何轨迹，结束前补记至少一条 `capture_tool_trace`。
 - 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
 - 用户要求删除记忆 -> delete_memory(name, category, summary)
 - 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
@@ -223,6 +234,35 @@ On first MCP run in a project, you'll automatically get:
 - `./.claude/engram/starter-complete` (complete sample Engram, directly loadable)
 - `./.claude/engram/starter-template` (instruction/template Engram for customization)
 - Both starter packs include a workflow reminder that Skills can be called at decision nodes.
+
+## Visual Management UI (Web UI)
+
+Engram includes a built-in visual management interface for browsing, editing, and managing all Engram packs in the browser.
+
+### Option 1: Trigger from Conversation (Recommended)
+
+In a Claude Code conversation, just say "open the management UI" — the AI will call the `open_ui` tool and your browser opens automatically.
+
+### Option 2: Run Standalone (No Claude Code Required)
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server ui
+```
+
+Optional flags:
+
+```bash
+# Custom port
+engram-server ui --port 8080
+
+# Don't auto-open browser
+engram-server ui --no-open
+
+# Specify Engram directory
+engram-server ui --packs-dir ~/.engram
+```
+
+> Standalone mode also requires no extra installation — `uvx` handles all dependencies automatically.
 
 ## CLI Usage
 
@@ -308,7 +348,7 @@ uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
 > # Then just use: engram stats / engram stats --tui / engram list
 > ```
 
-### How To Use New Features (v0.9.0 / v1.0.0 / v1.1.0)
+### How To Use New Features (v0.9.0 / v1.0.0 / v1.1.0 / v1.3.0)
 
 1) Data validation (`lint`)
 
@@ -344,6 +384,12 @@ When installing by name, the current version tries in this order:
 - If no local match exists, resolve `source` from registry and install
 - If registry `source` clone fails, fallback to main repo `examples/<name>`
 
+Registry entries also support local overrides (later sources win):
+- built-in: repo-root `registry.json`
+- remote: upstream online `registry.json`
+- user-level override: `~/.engram/registry.local.json`
+- project-level override: `./.claude/engram/registry.local.json`
+
 ### How to Submit an Engram PR to This Project
 
 1. Fork this repository and create a feature branch.
@@ -367,6 +413,19 @@ filename = "training-basics/squat-pattern"
 ```
 
 It writes to `knowledge/training-basics/squat-pattern.md`; if `knowledge/training-basics/_index.md` exists, the entry is appended there first.
+
+6) Case-study evaluation
+
+```bash
+# Copy template and fill baseline/engram answers
+cp evaluation/case_study_template.json evaluation/my_case_study.json
+
+# Run multi-dimensional scoring
+python3 evaluation/score_case_study.py --input evaluation/my_case_study.json
+
+# Optional CSV export
+python3 evaluation/score_case_study.py --input evaluation/my_case_study.json --csv evaluation/my_case_study_report.csv
+```
 
 ### Foolproof Engram Creation (Two Modes)
 
@@ -400,6 +459,8 @@ Example user intents:
 | `read_engram_file` | `name`, `path` | Read a single file on demand (with path traversal protection) |
 | `write_engram_file` | `name`, `path`, `content`, `mode` | Write or append content to an Engram pack (for auto-packaging) |
 | `capture_memory` | `name`, `content`, `category`, `summary`, `memory_type`, `tags`, `conversation_id`, `expires`, `is_global` | Capture user preferences and key info during conversation, supports type labels, tags, TTL expiry, and global write |
+| `capture_tool_trace` | `name`, `tool_name`, `intent`, `result_summary`, `args_summary`, `status`, `summary`, `tags`, `conversation_id` | Capture structured tool execution traces into `memory/tool-trace.md` for future workflow recommendations |
+| `list_tool_traces` | `name`, `limit` | Read recent tool trace summaries directly from memory index |
 | `consolidate_memory` | `name`, `category`, `consolidated_content`, `summary` | Compress raw memory entries into a dense summary, archiving originals to `{category}-archive.md` |
 | `delete_memory` | `name`, `category`, `summary` | Delete a specific memory entry by summary, removing it from both the index and category file |
 | `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | Correct an existing memory entry, updating both the index and category file |
@@ -411,6 +472,7 @@ Example user intents:
 | `stats_engrams` | `format` | Get stats through MCP with `plain/json/csv` formats |
 | `create_engram_assistant` | `mode`, `name?`, `topic?`, `audience?`, `style?`, `constraints?`, `language?`, `conversation?` | Generate an Engram draft (from_conversation / guided), with optional auto-fill for missing fields |
 | `finalize_engram_draft` | `draft_json`, `name?`, `nested`, `confirm` | Finalize confirmed draft into files and run lint automatically |
+| `open_ui` | `port?` | Launch the visual management UI and auto-open browser (default port 9470) |
 
 ### `load_engram` Response Format
 
@@ -842,6 +904,7 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 - install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
 - 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
 - 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+- 当用户说"打开engram管理界面"，AI 调用 open_ui()
 
 ## 专家加载与知识读取
 - 用户问题匹配某个专家时，调用 load_engram(name, query)。
@@ -855,6 +918,13 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 - 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
 - load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
 - 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 只要调用了工具（Skills / MCP / Subagent / 其他外部工具），都要记录工具轨迹：capture_tool_trace(name, tool_name, intent, result_summary, args_summary, status, summary, tags, conversation_id)。
+- 工具调用失败也要记录，status 设为 `error`，result_summary 写清失败原因。
+- engram-server 内部多数 `name` 相关工具会自动写入 tool-trace；但外部工具不会自动写，必须显式调用 capture_tool_trace。
+- 去重规则：若本轮已记录过“同一 tool_name + 同一 intent”的轨迹，不重复写入。
+- 外部工具记录字段优先级：至少填写 `tool_name`、`intent`、`args_summary`、`result_summary`、`status`。
+- 范围规则：只有已 `load_engram(name, ...)` 的专家，才写入该 `name` 的工具轨迹，避免串专家记忆。
+- 交付前检查：若本轮发生过工具调用但未写任何轨迹，结束前补记至少一条 `capture_tool_trace`。
 - 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
 - 用户要求删除记忆 -> delete_memory(name, category, summary)
 - 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
@@ -1038,6 +1108,22 @@ pytest -q
 - Project-level auto bootstrap: first run creates `./.claude/engram/`
 - Two starter packs are injected automatically: `starter-complete` (fully runnable) + `starter-template` (instruction/template)
 - MCP tools (`install_engram` / `init_engram` / `finalize_engram_draft`) now default to writing into the current project directory
+
+### Completed (v1.3.0)
+
+- Automatic tool-trace memory: `name`-scoped core MCP tool calls now auto-write to `memory/tool-trace.md`
+- Added trace tools: `capture_tool_trace` / `list_tool_traces` for Skills/MCP/Subagent/external-tool execution history
+- Multi-source registry merge and override: user-level and project-level `registry.local.json` are supported
+- Evaluation upgraded: `evaluation/score_case_study.py` now supports multi-dimensional scoring with weighted checkpoints
+- `serve --packs-dir` write-target behavior is more consistent across explicit paths, project paths, and default global path
+
+### Completed (v1.4.0)
+
+- Built-in Web UI: visual management interface for browsing, editing, and managing Engram packs in the browser
+- `open_ui` MCP tool: say "open the management UI" in conversation to launch the browser automatically
+- `engram-server ui` CLI command: run the Web UI standalone without Claude Code
+- Keyboard shortcut: Cmd+S / Ctrl+S to save files in the editor
+- Dark theme SPA with card-based Engram list, file tree, inline editor, and stats dashboard
 
 ### Planned
 

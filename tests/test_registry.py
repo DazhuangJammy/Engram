@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from engram_server import registry
+from engram_server import server
 from engram_server.server import main
 
 
@@ -67,6 +68,77 @@ def test_search_registry_list_all_queries() -> None:
             "fitness-coach",
             "language-partner",
         ]
+
+
+def test_search_registry_multi_token_prefers_name_hits() -> None:
+    entries = [
+        {
+            "name": "contract-lawyer",
+            "description": "合同审查与条款风险识别",
+            "tags": ["legal", "contract"],
+        },
+        {
+            "name": "lawyer-helper",
+            "description": "contract template and review",
+            "tags": ["assistant"],
+        },
+    ]
+
+    matched = registry.search_registry("contract lawyer", entries)
+    assert [item["name"] for item in matched] == [
+        "contract-lawyer",
+        "lawyer-helper",
+    ]
+
+
+def test_load_registry_file_invalid_json_returns_empty(tmp_path: Path) -> None:
+    broken = tmp_path / "registry.local.json"
+    broken.write_text("{bad json", encoding="utf-8")
+    assert registry.load_registry_file(broken) == []
+
+
+def test_merge_registry_entries_allows_later_override() -> None:
+    base = [
+        {"name": "fitness-coach", "source": "https://example.com/base.git"},
+        {"name": "lawyer", "source": "https://example.com/lawyer.git"},
+    ]
+    override = [
+        {"name": "Fitness-Coach", "source": "https://example.com/override.git"},
+    ]
+
+    merged = registry.merge_registry_entries(base, override)
+    assert len(merged) == 2
+    assert registry.resolve_name("fitness-coach", merged) == "https://example.com/override.git"
+
+
+def test_load_registry_entries_merges_local_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".claude" / "engram").mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+
+    def fake_load_registry_file(path: Path | str) -> list[dict]:
+        path_text = str(Path(path).expanduser())
+        if path_text.endswith("registry.json"):
+            return [{"name": "demo", "source": "built-in"}]
+        if path_text.endswith(".engram/registry.local.json"):
+            return [{"name": "demo", "source": "user-local"}]
+        if path_text.endswith(".claude/engram/registry.local.json"):
+            return [{"name": "demo", "source": "project-local"}]
+        return []
+
+    monkeypatch.setattr(server, "load_registry_file", fake_load_registry_file)
+    monkeypatch.setattr(server, "fetch_registry", lambda: [{"name": "demo", "source": "remote"}])
+
+    entries = server._load_registry_entries()
+    assert registry.resolve_name("demo", entries) == "project-local"
 
 
 def test_resolve_name_exact_and_missing() -> None:

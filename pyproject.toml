@@ -19,7 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Topic :: Software Development :: Libraries",
 ]
-dependencies = ["mcp", "rich>=13.0"]
+dependencies = ["mcp", "rich>=13.0", "starlette", "uvicorn"]
 
 [project.optional-dependencies]
 dev = [
@@ -41,6 +41,9 @@ engram_server = [
   "templates/meta.json",
   "templates/*.md",
   "templates/*/*.md",
+  "static/*.html",
+  "static/*.css",
+  "static/*.js",
 ]
 
 [tool.pytest.ini_options]

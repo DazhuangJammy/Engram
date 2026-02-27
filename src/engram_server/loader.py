@@ -390,6 +390,98 @@ class EngramLoader:
         self._rebuild_hot_index(memory_dir)
         return True
 
+    def capture_tool_trace(
+        self,
+        name: str,
+        tool_name: str,
+        intent: str,
+        result_summary: str,
+        *,
+        args_summary: str | None = None,
+        status: str = "ok",
+        summary: str | None = None,
+        tags: list[str] | None = None,
+        conversation_id: str | None = None,
+    ) -> bool:
+        """Capture one structured tool trace into memory/tool-trace.md."""
+        normalized_tool = tool_name.strip()
+        normalized_intent = intent.strip()
+        normalized_result = result_summary.strip()
+        normalized_status = status.strip().lower() if status else "ok"
+        if not normalized_tool or not normalized_intent or not normalized_result:
+            return False
+        if not normalized_status:
+            normalized_status = "ok"
+
+        content_lines = [
+            f"tool: {normalized_tool}",
+            f"intent: {normalized_intent}",
+        ]
+        if args_summary and args_summary.strip():
+            content_lines.append(f"args: {args_summary.strip()}")
+        content_lines.append(f"result: {normalized_result}")
+        content_lines.append(f"status: {normalized_status}")
+
+        normalized_tags = [f"tool:{normalized_tool}", f"status:{normalized_status}"]
+        if tags:
+            normalized_tags.extend(str(tag).strip() for tag in tags if str(tag).strip())
+        deduped_tags: list[str] = []
+        seen: set[str] = set()
+        for tag in normalized_tags:
+            if tag in seen:
+                continue
+            seen.add(tag)
+            deduped_tags.append(tag)
+
+        index_summary = (
+            summary.strip()
+            if summary and summary.strip()
+            else f"{normalized_tool} [{normalized_status}] {normalized_intent}"
+        )
+        return self.capture_memory(
+            name=name,
+            content="\n".join(content_lines),
+            category="tool-trace",
+            summary=index_summary,
+            memory_type="tool_trace",
+            tags=deduped_tags,
+            conversation_id=conversation_id,
+            throttle_seconds=5,
+        )
+
+    def list_recent_memory_summaries(
+        self,
+        name: str,
+        category: str,
+        *,
+        limit: int = 10,
+    ) -> list[str]:
+        """List recent memory index entries for one category."""
+        if limit <= 0:
+            return []
+
+        engram_dir = self._resolve_engram_dir(name)
+        if engram_dir is None:
+            return []
+
+        memory_dir = engram_dir / "memory"
+        if not memory_dir.is_dir():
+            return []
+        self._archive_expired_entries(memory_dir)
+
+        index_file = self._pick_memory_index_source(memory_dir)
+        if index_file is None:
+            return []
+
+        try:
+            lines = index_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+
+        needle = f"`memory/{category}.md`"
+        matched = [line for line in lines if needle in line and not self._is_expired(line)]
+        return matched[-limit:]
+
     def delete_memory(self, name: str, category: str, summary: str) -> bool:
         """Delete a specific memory entry by matching its summary in the index.
 
