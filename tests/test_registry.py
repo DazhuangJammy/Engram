@@ -55,6 +55,20 @@ def test_search_registry_fuzzy_match() -> None:
     assert [item["name"] for item in tag_result] == ["language-partner"]
 
 
+def test_search_registry_list_all_queries() -> None:
+    entries = [
+        {"name": "fitness-coach", "description": "训练计划", "tags": ["fitness"]},
+        {"name": "language-partner", "description": "口语陪练", "tags": ["language"]},
+    ]
+
+    for query in ("all", "engram", "expert", "全部", ""):
+        matched = registry.search_registry(query, entries)
+        assert [item["name"] for item in matched] == [
+            "fitness-coach",
+            "language-partner",
+        ]
+
+
 def test_resolve_name_exact_and_missing() -> None:
     entries = [{"name": "fitness-coach", "source": "https://example.com/fitness.git"}]
 

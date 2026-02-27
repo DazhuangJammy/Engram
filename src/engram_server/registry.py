@@ -9,6 +9,22 @@ REGISTRY_URL = (
     "https://raw.githubusercontent.com/DazhuangJammy/Engram/main/registry.json"
 )
 
+_LIST_ALL_QUERIES = {
+    "",
+    "*",
+    "all",
+    "any",
+    "list",
+    "everything",
+    "engram",
+    "engrams",
+    "expert",
+    "experts",
+    "全部",
+    "所有",
+    "列表",
+}
+
 
 def fetch_registry() -> list[dict]:
     try:
@@ -29,8 +45,8 @@ def fetch_registry() -> list[dict]:
 
 def search_registry(query: str, entries: list[dict]) -> list[dict]:
     q = query.strip().lower()
-    if not q:
-        return []
+    if q in _LIST_ALL_QUERIES:
+        return entries
 
     results: list[dict] = []
     for entry in entries:
