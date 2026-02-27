@@ -115,7 +115,8 @@ def test_init_engram_pack_success(tmp_path: Path) -> None:
     assert (target / "meta.json").is_file()
     assert (target / "role.md").is_file()
     assert (target / "knowledge/_index.md").is_file()
-    assert (target / "examples/案例名.md").is_file()
+    assert (target / "examples/写好案例.md").is_file()
+    assert (target / "examples/说明样本.md").is_file()
     meta = json.loads((target / "meta.json").read_text(encoding="utf-8"))
     assert meta["name"] == "my-expert"
 
@@ -141,3 +142,18 @@ def test_cli_init_command(tmp_path: Path) -> None:
 
     assert "初始化成功" in completed.stdout
     assert (packs_dir / "cli-pack" / "meta.json").is_file()
+
+
+def test_init_engram_pack_nested_creates_grouped_indexes(tmp_path: Path) -> None:
+    packs_dir = tmp_path / "packs"
+
+    result = init_engram_pack("nested-pack", packs_dir, nested=True)
+
+    assert result["ok"] is True
+    target = packs_dir / "nested-pack"
+    assert (target / "knowledge" / "_index.md").is_file()
+    assert (target / "knowledge" / "分组示例" / "_index.md").is_file()
+    assert (target / "knowledge" / "分组示例" / "示例知识.md").is_file()
+
+    top_index = (target / "knowledge" / "_index.md").read_text(encoding="utf-8")
+    assert "→ 详见 knowledge/分组示例/_index.md" in top_index

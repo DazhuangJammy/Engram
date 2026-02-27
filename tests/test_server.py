@@ -8,7 +8,7 @@ import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from engram_server.server import _build_loader_roots
+from engram_server.server import _build_loader_roots, _ensure_project_engram_workspace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -271,6 +271,68 @@ async def test_consolidate_memory(tmp_path: Path) -> None:
     assert "训练偏好摘要" in loaded
 
 
+@pytest.mark.asyncio
+async def test_mcp_stats_tool_supports_json_and_csv(tmp_path: Path) -> None:
+    _setup_tmp_engram(tmp_path, "test-expert")
+    session = await _open_session(tmp_path)
+    try:
+        await session.call_tool(
+            "capture_memory",
+            {
+                "name": "test-expert",
+                "content": "用户偏好晨练",
+                "category": "preferences",
+                "summary": "偏好晨练",
+                "memory_type": "preference",
+            },
+        )
+        json_text = _result_text(await session.call_tool("stats_engrams", {"format": "json"}))
+        csv_text = _result_text(await session.call_tool("stats_engrams", {"format": "csv"}))
+    finally:
+        await _close_session(session)
+
+    parsed = json.loads(json_text)
+    assert "generated_at" in parsed
+    names = {item["name"] for item in parsed["engrams"]}
+    assert "test-expert" in names
+    assert "name,knowledge_count,examples_count,memory_count" in csv_text
+
+
+@pytest.mark.asyncio
+async def test_mcp_lint_and_init_tools(tmp_path: Path) -> None:
+    session = await _open_session(tmp_path)
+    try:
+        init_text = _result_text(
+            await session.call_tool("init_engram", {"name": "nested-pack", "nested": True})
+        )
+        lint_text = _result_text(
+            await session.call_tool("lint_engrams", {"name": "nested-pack"})
+        )
+    finally:
+        await _close_session(session)
+
+    assert "初始化成功" in init_text
+    assert "nested-pack: 0 errors, 0 warnings" in lint_text
+    assert (tmp_path / "nested-pack" / "knowledge" / "分组示例" / "_index.md").is_file()
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_and_install_name_not_found(tmp_path: Path) -> None:
+    session = await _open_session(tmp_path)
+    try:
+        search_text = _result_text(
+            await session.call_tool("search_engrams", {"query": "fitness"})
+        )
+        install_text = _result_text(
+            await session.call_tool("install_engram", {"source": "not-exist-pack-name"})
+        )
+    finally:
+        await _close_session(session)
+
+    assert "fitness" in search_text.lower()
+    assert "未在 registry 中找到" in install_text
+
+
 def _setup_tmp_engram(tmp_path: Path, name: str) -> None:
     """Create a minimal engram in tmp_path for MCP tests."""
     d = tmp_path / name
@@ -310,3 +372,59 @@ def test_build_loader_roots_fallback_to_configured_only(
     roots = _build_loader_roots(global_packs)
 
     assert roots == [global_packs.resolve()]
+
+
+def test_ensure_project_engram_workspace_bootstraps_starter_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    monkeypatch.chdir(workspace)
+    project_packs = _ensure_project_engram_workspace()
+
+    assert project_packs == (workspace / ".claude" / "engram").resolve()
+    complete = project_packs / "starter-complete"
+    template = project_packs / "starter-template"
+    assert (complete / "meta.json").is_file()
+    assert (complete / "knowledge" / "目标拆解法.md").is_file()
+    assert (complete / "examples" / "完整案例.md").is_file()
+    assert (template / "meta.json").is_file()
+    assert (template / "examples" / "写好案例.md").is_file()
+    assert (template / "examples" / "说明样本.md").is_file()
+
+
+def test_ensure_project_engram_workspace_keeps_existing_project_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    existing = workspace / ".claude" / "engram" / "custom-pack"
+    existing.mkdir(parents=True)
+    (existing / "meta.json").write_text(
+        json.dumps({"name": "custom-pack", "description": "existing"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(workspace)
+    project_packs = _ensure_project_engram_workspace()
+
+    assert project_packs == (workspace / ".claude" / "engram").resolve()
+    assert (project_packs / "custom-pack" / "meta.json").is_file()
+    assert not (project_packs / "starter-complete").exists()
+    assert not (project_packs / "starter-template").exists()
+
+
+def test_ensure_project_engram_workspace_reuses_existing_claude_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    claude_dir = workspace / ".claude"
+    claude_dir.mkdir(parents=True)
+
+    monkeypatch.chdir(workspace)
+    project_packs = _ensure_project_engram_workspace()
+
+    assert project_packs == (claude_dir / "engram").resolve()
+    assert project_packs.is_dir()
+    assert (project_packs / "starter-complete").is_dir()
+    assert (project_packs / "starter-template").is_dir()

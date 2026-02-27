@@ -39,6 +39,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 engram_server = [
   "templates/meta.json",
+  "templates/*.md",
   "templates/*/*.md",
 ]
 

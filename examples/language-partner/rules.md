@@ -33,3 +33,8 @@
 - 当前日语水平（N几 / 初学 / 自学多久）→ capture_memory(category="user-profile")
 - 学习目标（考试 / 旅行 / 工作 / 兴趣）→ capture_memory(category="goals")
 - 最想练的方向（口语 / 听力 / 阅读 / 写作）→ capture_memory(category="preferences", memory_type="preference")
+
+## 知识提取规则
+- 当总结出一组稳定语法规则（时态、助词、固定句型）时，主动提议 add_knowledge 沉淀。
+- 当归纳出用户高频错误（发音、搭配、敬语）并给出纠正模板时，提议 add_knowledge 写入知识库。
+- 当用户指出现有表达不地道或已过时时，提议用 add_knowledge 更新原有知识条目。

@@ -37,7 +37,7 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 ## 功能特性
 
 - 零向量依赖：不使用 chromadb / litellm，只依赖 `mcp`
-- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`delete_memory`、`correct_memory`、`add_knowledge`、`install_engram`
+- MCP 工具：`ping`、`list_engrams`、`get_engram_info`、`load_engram`、`read_engram_file`、`write_engram_file`、`capture_memory`、`consolidate_memory`、`delete_memory`、`correct_memory`、`add_knowledge`、`install_engram`、`init_engram`、`lint_engrams`、`search_engrams`、`stats_engrams`、`create_engram_assistant`、`finalize_engram_draft`
 - 索引驱动加载：
   - `load_engram` 返回角色/工作流程/规则 + 知识索引（含内联摘要）+ 案例索引（含 uses）+ 动态记忆索引 + 全局用户记忆
   - `read_engram_file` 按路径按需读取知识或案例全文
@@ -47,8 +47,8 @@ RAG 能检索知识，但没有人设、没有决策流程——Engram 解决这
 - Index 分层：`_index.md` 只保留最近50条（热层），完整记录写入 `_index_full.md`（冷层）
 - Engram 继承：`meta.json` 支持 `extends` 字段，自动合并父 Engram 的 knowledge index
 - 冷启动引导：`rules.md` 支持 `## Onboarding` 区块，首次使用时自动触发信息收集
-- CLI 命令：`serve` / `list` / `install` / `init` / `stats`
-- 统计面板：`engram-server stats` 查看记忆统计，`--tui` 启用 rich 渲染
+- CLI 命令：`serve` / `list` / `search` / `install` / `init` / `lint` / `stats`
+- 统计面板：`engram-server stats` 支持纯文本 / `--json` / `--csv` / `--tui`
 
 ## 设计理念：索引驱动的分层懒加载
 
@@ -83,6 +83,28 @@ Engram 被加载后，内容不是全量塞入，而是分层按需加载：
 
 骨架常驻不丢，知识通过"索引内联摘要 + 全文按需"控制 token 消耗。不管 Engram 有多大，每次注入的内容都是可控的。
 
+## 分组索引（Nested Index）
+
+当知识文件变多时，建议使用二级目录分组：
+
+```text
+knowledge/
+  _index.md
+  训练基础/
+    _index.md
+    深蹲模式.md
+  营养策略/
+    _index.md
+    增肌期配餐.md
+```
+
+顶层 `_index.md` 可写 `→ 详见 knowledge/训练基础/_index.md` 作为分组入口；`add_knowledge` 支持 `"子目录/文件名"` 写法，并在子目录存在 `_index.md` 时优先追加到子索引。
+
+LLM 三步工作流：
+1. `load_engram` 先读取顶层 `knowledge/_index.md`
+2. 看到分组入口后，调用 `read_engram_file(name, "knowledge/xxx/_index.md")`
+3. 再按需读取具体知识文件 `knowledge/xxx/topic.md`
+
 ## 安装
 
 ### 前置条件
@@ -109,9 +131,10 @@ claude mcp add --scope user engram-server -- uvx --from git+https://github.com/D
 
 这条命令会：
 - 将 MCP 配置写入全局（所有项目都能用）
-- 不往你的项目里塞任何代码
+- 首次在某个项目中运行时，自动创建 `./.claude/engram/`
+- 自动放入两个起始包：`starter-complete`（完整可加载）和 `starter-template`（说明模板）
 - 每次 Claude Code 启动时，自动从 GitHub 拉取最新版本运行
-- 专家包数据默认存放在 `~/.engram`
+- `~/.engram` 仍可作为共享/回退目录（由 `--packs-dir` 指定）
 
 安装完成后**重启 Claude Code**，即可开始使用。
 
@@ -121,7 +144,7 @@ claude mcp add --scope user engram-server -- uvx --from git+https://github.com/D
 claude mcp remove --scope user engram-server
 ```
 
-> 卸载只移除 MCP 配置，不会删除你的 Engram 数据（`~/.engram/`）。如需彻底清理数据，手动执行 `rm -rf ~/.engram`。
+> 卸载只移除 MCP 配置，不会删除你的 Engram 数据（包括项目内 `./.claude/engram/` 与可选的 `~/.engram/`）。
 
 ## 快速开始
 
@@ -130,30 +153,80 @@ claude mcp remove --scope user engram-server
 在项目的 `CLAUDE.md`（Claude Code）或 `AGENTS.md`（Codex）文件开头加入以下提示词，让 AI 自动发现和使用 Engram：
 
 ```text
-你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 mcp 中的list_engrams() 查看可用专家。
-- 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
-- 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
-- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。
-- load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并 capture_memory
-- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) 记录下来。记录时可用 memory_type 标注语义类型（preference/fact/decision/history/general/inferred/stated），用 tags 打标签便于过滤。
-- load_engram 返回结果中若出现「💡 当前共 N 条记忆」提示（动态记忆热层总条目 ≥ 30），先调用 read_engram_file(name, "memory/{category}.md") 读取条目较多的分类原始内容，再调用 consolidate_memory(name, category, consolidated_content, summary) 压缩（须自行合成 consolidated_content 传入，仅支持专家记忆，不支持全局记忆）
-- 用户也可以用 @专家名 直接指定使用哪个专家。
-- 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
-- load_engram 返回知识索引后，若索引摘要不足以回答问题，调用 read_engram_file(name, "knowledge/xxx.md") 读取具体文件全文再回答
-- 用户要求删除某条记忆时，调用 delete_memory(name, category, summary)（仅支持专家记忆，不支持全局记忆）
-- 用户纠正某条记忆内容时，调用 correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)（仅支持专家记忆，不支持全局记忆）
-- 对话中产生了值得长期保存的新知识（非用户个人信息），调用 add_knowledge(name, filename, content, summary) 写入知识库
-- 当记忆较多或要查历史时，可 read_engram_file(name, "memory/_index_full.md") 查看完整记忆冷层。
-- load_engram 返回内容含「继承知识索引」区块时，知识来自父专家，可调用 read_engram_file(父专家名, "knowledge/xxx.md") 读取具体父专家知识文件
-- 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)
-- 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
-- 需要直接修改 engram 的 role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)
-- 用户询问记忆统计或想了解当前有多少记忆时，建议用户在终端运行 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` 或 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui`
+你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 MCP 中的 list_engrams() 查看可用专家。
+
+# 自动执行规则（傻瓜式）
+- 默认原则：能由模型直接完成的事，不让用户手动执行命令；优先直接调用 MCP 工具。
+- 除非环境/权限阻塞，否则不要让用户“自己去终端跑命令”。
+- 如果调用了 MCP，回复时要告诉用户调用了什么 MCP 和哪个专家。
+- 首次进入新项目时，默认检查并使用 `./.claude/engram`。
+- 目录策略统一为“项目级优先，`~/.engram` 为共享/回退目录”。
+
+## 自然语言意图 -> MCP 自动映射
+- 用户说“找/查/推荐某类 Engram” -> 自动调用 search_engrams(query)
+- 用户说“安装某个 Engram” -> 自动调用 install_engram(source-or-name)
+- 安装默认写入当前项目 `./.claude/engram`，不是默认全局目录。
+- 用户说“初始化当前项目 engram” -> 优先检查 `starter-complete` / `starter-template` 是否存在。
+- install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
+- 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
+- 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+
+## 专家加载与知识读取
+- 用户问题匹配某个专家时，调用 load_engram(name, query)。
+- load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
+- 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
+
+## 记忆写入规则
+- 发现跨专家通用信息（年龄、城市、职业、语言偏好等） -> capture_memory(..., is_global=True)
+- 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
+- load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
+- 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
+- 用户要求删除记忆 -> delete_memory(name, category, summary)
+- 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
+- 记忆较多查历史 -> read_engram_file(name, "memory/_index_full.md")
+
+## 知识写入规则
+- 对话中形成系统性可复用知识（方法论/对比分析/决策框架）时，先询问用户是否写入知识库，确认后 add_knowledge。
+- 用户纠正知识库错误时，提议并执行 add_knowledge 更新。
+- add_knowledge 支持分组路径：filename 可用 "子目录/文件名"（如 "训练基础/深蹲模式"）。
+
+## 创建 Engram 助手（双模式）
+- mode=from_conversation：把当前对话自动整理成 Engram 草稿。
+- mode=guided：一步步引导用户填写；用户说“没有/你来”时自动补全。
+- 统一流程：
+  1) 先调用 create_engram_assistant(...) 生成草稿并回显
+  2) 用户确认后调用 finalize_engram_draft(draft_json, confirm=True)
+  3) finalize 后必须看 lint 结果（errors 必须先修复）
+- 自动生成内容时必须提示：内容可能不完整，建议用户补充。
+- 创建阶段不自动生成用户记忆条目；memory 保持空模板。
+
+## 一致性校验
+- 只要模型新增/修改了 knowledge/examples/index/meta/rules，完成后自动调用 lint_engrams(name)。
+- 解释规则：
+  - error > 0：阻断，先修复再交付。
+  - 仅 warning：可交付，但需向用户说明风险。
+
+## 其他
+- 用户也可以用 @专家名 直接指定专家。
+- 用户询问某个 engram 详细信息时，调用 get_engram_info(name)。
+- 需要直接改 role.md/workflow.md/rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)。
+- 新增/修改案例文件时，确保 frontmatter 字段齐全（id/title/uses/tags/updated_at），id 全局唯一，updated_at 用当天日期。
+- 多案例命中时，先按 tags 匹配，再参考 updated_at 选更近的案例。
+- 回复中引用案例时优先带 title + id，减少歧义。
+- 若发现 frontmatter 缺字段或 uses 指向不存在文件，先修复再继续回答。
 ```
 
 ### 4. 重启 AI 客户端，开始使用
 
+首次在项目里触发 MCP 后，会自动得到：
+- `./.claude/engram/starter-complete`（完整示例 Engram，可直接加载）
+- `./.claude/engram/starter-template`（说明/模板 Engram，用于改造）
+
 ## CLI 用法
+
+> 说明：MCP 运行时默认优先使用当前项目的 `./.claude/engram/`。下面 CLI 示例主要用于手动管理指定目录（如共享目录 `~/.engram`）。
 
 启动 MCP stdio 服务（默认命令）：
 
@@ -173,10 +246,10 @@ engram-server --packs-dir ~/.engram
 engram-server list --packs-dir ~/.engram
 ```
 
-从 git 安装 Engram：
+从 git URL 或 registry 名称安装 Engram：
 
 ```bash
-engram-server install <git-url> --packs-dir ~/.engram
+engram-server install <git-url|engram-name> --packs-dir ~/.engram
 ```
 
 初始化一个新 Engram 模板：
@@ -185,10 +258,40 @@ engram-server install <git-url> --packs-dir ~/.engram
 engram-server init my-expert --packs-dir ~/.engram
 ```
 
+初始化一个带二级知识索引的模板：
+
+```bash
+engram-server init my-expert --nested --packs-dir ~/.engram
+```
+
+搜索 registry 中的 Engram：
+
+```bash
+engram-server search fitness --packs-dir ~/.engram
+```
+
+运行数据一致性校验：
+
+```bash
+engram-server lint [name] --packs-dir ~/.engram
+```
+
 查看记忆统计（纯文本）：
 
 ```bash
 uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats
+```
+
+查看记忆统计（JSON）：
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --json
+```
+
+查看记忆统计（CSV）：
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --csv
 ```
 
 查看记忆统计（Rich 渲染版）：
@@ -205,6 +308,74 @@ uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
 > # 之后直接用：engram stats / engram stats --tui / engram list
 > ```
 
+### 新功能怎么用（v0.9.0 / v1.0.0 / v1.1.0）
+
+1) 数据校验（lint）
+
+```bash
+# 校验全部 Engram
+engram-server lint --packs-dir ~/.engram
+
+# 仅校验一个
+engram-server lint fitness-coach --packs-dir ~/.engram
+```
+
+> 退出码规则：有 error 返回 1；只有 warning 返回 0。
+
+2) 统计导出（JSON / CSV）
+
+```bash
+engram-server stats --json --packs-dir ~/.engram
+engram-server stats --csv --packs-dir ~/.engram
+```
+
+3) 搜索与安装（Registry）
+
+```bash
+# 先搜索
+engram-server search fitness --packs-dir ~/.engram
+
+# 再按名称安装（install 会自动解析为 source URL）
+engram-server install fitness-coach --packs-dir ~/.engram
+```
+
+4) 初始化分组索引模板
+
+```bash
+engram-server init my-expert --nested --packs-dir ~/.engram
+```
+
+5) 对话中写入分组知识（MCP）
+
+当调用 `add_knowledge(name, filename, content, summary)` 时，`filename` 可用子目录格式，例如：
+
+```text
+filename = "训练基础/深蹲模式"
+```
+
+系统会写入 `knowledge/训练基础/深蹲模式.md`；若 `knowledge/训练基础/_index.md` 存在，则优先追加到子索引。
+
+### 傻瓜式创建 Engram（双模式）
+
+用户只用自然语言说“帮我创建一个 Engram”，模型应自动走以下流程：
+
+1) 生成草稿  
+- 对话直转：`create_engram_assistant(mode=\"from_conversation\", ...)`
+- 引导创建：`create_engram_assistant(mode=\"guided\", ...)`
+
+2) 回显并确认  
+- 给用户展示草稿摘要（名称、知识目录、案例目录、自动补全字段）
+- 明确提示：自动生成内容可能不完整，建议补充
+
+3) 确认后落盘  
+- `finalize_engram_draft(draft_json, confirm=True, nested=True)`
+- 工具会自动执行 lint 并返回 errors/warnings
+- 若有 error，先修复再交付
+
+示例话术：
+- “把我们刚才的讨论做成一个 Engram”（from_conversation）
+- “帮我做一个面试官 Engram，你来补全细节”（guided + auto-fill）
+
 ## MCP 工具列表
 
 | 工具 | 参数 | 说明 |
@@ -220,7 +391,13 @@ uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
 | `delete_memory` | `name`, `category`, `summary` | 按摘要精确删除一条记忆，同时从索引和分类文件中移除 |
 | `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | 修正一条已有记忆的内容，更新索引和分类文件 |
 | `add_knowledge` | `name`, `filename`, `content`, `summary` | 向 Engram 添加新知识文件并自动更新知识索引 |
-| `install_engram` | `source` | 从 git URL 安装 Engram 包 |
+| `install_engram` | `source` | 从 git URL 或 registry 名称安装 Engram 包 |
+| `init_engram` | `name`, `nested` | 通过 MCP 初始化新 Engram（可选二级知识索引模板） |
+| `lint_engrams` | `name?` | 通过 MCP 执行一致性校验，返回 errors/warnings 明细 |
+| `search_engrams` | `query` | 通过 MCP 搜索 registry 条目 |
+| `stats_engrams` | `format` | 通过 MCP 获取统计，`format` 支持 `plain/json/csv` |
+| `create_engram_assistant` | `mode`, `name?`, `topic?`, `audience?`, `style?`, `constraints?`, `language?`, `conversation?` | 生成 Engram 草稿（from_conversation / guided），缺失字段可自动补全并标注 |
+| `finalize_engram_draft` | `draft_json`, `name?`, `nested`, `confirm` | 用户确认后落盘创建 Engram，并自动执行 lint 校验 |
 
 ### `load_engram` 返回内容格式
 
@@ -669,25 +846,69 @@ updated_at: 2026-02-26
 | 其他 | 对应工具的 system prompt 配置 |
 
 ```text
-你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 mcp 中的list_engrams() 查看可用专家。
-- 当用户的问题匹配某个专家时，调用 load_engram(name, query) 获取专家知识来回答。
-- 发现跨专家通用的用户信息（年龄、城市、职业、语言偏好等基础信息）时，调用 capture_memory(..., is_global=True) 写入全局记忆
-- 状态性记忆（"用户正在备考"、"用户目前受伤"等有时效的信息）加 expires 参数，expires 使用 YYYY-MM-DD（如 2026-06-01），到期后会归档并从加载结果隐藏。
-- load_engram 返回内容中若出现"首次引导"区块，在对话中自然地收集所列信息并 capture_memory
-- 对话中发现用户的重要偏好或关键信息时，调用 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) 记录下来。记录时可用 memory_type 标注语义类型（preference/fact/decision/history/general/inferred/stated），用 tags 打标签便于过滤。
-- load_engram 返回结果中若出现「💡 当前共 N 条记忆」提示（动态记忆热层总条目 ≥ 30），先调用 read_engram_file(name, "memory/{category}.md") 读取条目较多的分类原始内容，再调用 consolidate_memory(name, category, consolidated_content, summary) 压缩（须自行合成 consolidated_content 传入，仅支持专家记忆，不支持全局记忆）
-- 用户也可以用 @专家名 直接指定使用哪个专家。
-- 如果调用了 mcp，回复的时候要告诉我调用了什么 mcp 和什么专家
-- load_engram 返回知识索引后，若索引摘要不足以回答问题，调用 read_engram_file(name, "knowledge/xxx.md") 读取具体文件全文再回答
-- 用户要求删除某条记忆时，调用 delete_memory(name, category, summary)（仅支持专家记忆，不支持全局记忆）
-- 用户纠正某条记忆内容时，调用 correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)（仅支持专家记忆，不支持全局记忆）
-- 对话中产生了值得长期保存的新知识（非用户个人信息），调用 add_knowledge(name, filename, content, summary) 写入知识库
-- 当记忆较多或要查历史时，可 read_engram_file(name, "memory/_index_full.md") 查看完整记忆冷层。
-- load_engram 返回内容含「继承知识索引」区块时，知识来自父专家，可调用 read_engram_file(父专家名, "knowledge/xxx.md") 读取具体父专家知识文件
-- 用户询问某个 engram 的详细信息时，调用 get_engram_info(name)
-- 用户要安装新 engram 时，调用 install_engram(source)（source 为 git URL）
-- 需要直接修改 engram 的 role.md / workflow.md / rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)
-- 用户询问记忆统计或想了解当前有多少记忆时，建议用户在终端运行 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` 或 `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui`
+你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 MCP 中的 list_engrams() 查看可用专家。
+
+# 自动执行规则（傻瓜式）
+- 默认原则：能由模型直接完成的事，不让用户手动执行命令；优先直接调用 MCP 工具。
+- 除非环境/权限阻塞，否则不要让用户“自己去终端跑命令”。
+- 如果调用了 MCP，回复时要告诉用户调用了什么 MCP 和哪个专家。
+- 首次进入新项目时，默认检查并使用 `./.claude/engram`。
+- 目录策略统一为“项目级优先，`~/.engram` 为共享/回退目录”。
+
+## 自然语言意图 -> MCP 自动映射
+- 用户说“找/查/推荐某类 Engram” -> 自动调用 search_engrams(query)
+- 用户说“安装某个 Engram” -> 自动调用 install_engram(source-or-name)
+- 安装默认写入当前项目 `./.claude/engram`，不是默认全局目录。
+- 用户说“初始化当前项目 engram” -> 优先检查 `starter-complete` / `starter-template` 是否存在。
+- install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
+- 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
+- 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+
+## 专家加载与知识读取
+- 用户问题匹配某个专家时，调用 load_engram(name, query)。
+- load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
+- 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
+
+## 记忆写入规则
+- 发现跨专家通用信息（年龄、城市、职业、语言偏好等） -> capture_memory(..., is_global=True)
+- 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
+- load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
+- 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
+- 用户要求删除记忆 -> delete_memory(name, category, summary)
+- 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
+- 记忆较多查历史 -> read_engram_file(name, "memory/_index_full.md")
+
+## 知识写入规则
+- 对话中形成系统性可复用知识（方法论/对比分析/决策框架）时，先询问用户是否写入知识库，确认后 add_knowledge。
+- 用户纠正知识库错误时，提议并执行 add_knowledge 更新。
+- add_knowledge 支持分组路径：filename 可用 "子目录/文件名"（如 "训练基础/深蹲模式"）。
+
+## 创建 Engram 助手（双模式）
+- mode=from_conversation：把当前对话自动整理成 Engram 草稿。
+- mode=guided：一步步引导用户填写；用户说“没有/你来”时自动补全。
+- 统一流程：
+  1) 先调用 create_engram_assistant(...) 生成草稿并回显
+  2) 用户确认后调用 finalize_engram_draft(draft_json, confirm=True)
+  3) finalize 后必须看 lint 结果（errors 必须先修复）
+- 自动生成内容时必须提示：内容可能不完整，建议用户补充。
+- 创建阶段不自动生成用户记忆条目；memory 保持空模板。
+
+## 一致性校验
+- 只要模型新增/修改了 knowledge/examples/index/meta/rules，完成后自动调用 lint_engrams(name)。
+- 解释规则：
+  - error > 0：阻断，先修复再交付。
+  - 仅 warning：可交付，但需向用户说明风险。
+
+## 其他
+- 用户也可以用 @专家名 直接指定专家。
+- 用户询问某个 engram 详细信息时，调用 get_engram_info(name)。
+- 需要直接改 role.md/workflow.md/rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)。
+- 新增/修改案例文件时，确保 frontmatter 字段齐全（id/title/uses/tags/updated_at），id 全局唯一，updated_at 用当天日期。
+- 多案例命中时，先按 tags 匹配，再参考 updated_at 选更近的案例。
+- 回复中引用案例时优先带 title + id，减少歧义。
+- 若发现 frontmatter 缺字段或 uses 指向不存在文件，先修复再继续回答。
 ```
 
 ### 方式 B：MCP Prompt
@@ -727,7 +948,36 @@ uv cache clean
 
 然后**重启 Claude Code**，`uvx` 会自动从 GitHub 拉取最新代码。
 
-> 你的 Engram 数据存放在 `~/.engram/` 目录，与项目代码完全分离，更新不会影响已有数据。
+> 当前版本会在首次运行时为项目自动创建 `./.claude/engram/`（含 `starter-complete` 与 `starter-template`）。`~/.engram/` 仍可作为跨项目共享目录。
+
+## 多设备同步
+
+### 方案 A：iCloud / Dropbox / OneDrive 同步目录
+
+把 `--packs-dir` 指向云盘同步目录即可，多台设备共用同一份 Engram 数据：
+
+```bash
+claude mcp add --scope user engram-server -- \
+  uvx --from git+https://github.com/DazhuangJammy/Engram engram-server \
+  --packs-dir "$HOME/Library/Mobile Documents/com~apple~CloudDocs/EngramPacks"
+```
+
+> Windows 可改成 OneDrive 路径，例如 `C:\\Users\\<你用户名>\\OneDrive\\EngramPacks`。
+
+### 方案 B：Git 同步（把 `~/.engram` 当作仓库）
+
+如果你更偏向可审计变更，可以直接把 `~/.engram` 初始化为 git 仓库并推送到私有远程：
+
+```bash
+cd ~/.engram
+git init
+git remote add origin <your-private-repo-url>
+git add .
+git commit -m "init engram packs"
+git push -u origin main
+```
+
+之后在其他设备拉取同仓库，再用同样的 MCP 配置即可。
 
 ## 测试
 
@@ -782,10 +1032,37 @@ pytest -q
 - `engram-server stats --tui`：Rich 渲染版统计面板（彩色表格 + 面板）
 - `rich>=13.0` 作为必装依赖，不影响一键安装体验
 
+### 已完成（v0.9.0）
+
+- `engram-server lint`：校验索引一致性、uses 引用、meta 合法性、extends、空知识文件、最小必需文件
+- `engram-server stats --json / --csv`：支持机器可读导出格式
+- system prompt 与模板规则新增知识提取引导，鼓励 AI 主动沉淀结构化知识
+
+### 已完成（v1.0.0）
+
+- 分组索引：`add_knowledge` 支持二级目录写入与子索引优先更新
+- `engram-server init --nested`：可一键生成带分组索引的模板
+- 静态 Registry：新增 `registry.json`、`engram-server search`、`install` 名称解析
+- README 新增多设备同步章节（云盘 / Git 两种方案）
+
+### 已完成（v1.1.0）
+
+- 傻瓜式自然语言路由：用户只说需求，模型默认自动调用 MCP 工具
+- 创建助手双模式：`create_engram_assistant` 支持 `from_conversation` 与 `guided`
+- 确认后落盘：`finalize_engram_draft` 自动创建文件并执行 `lint_engrams`
+- 自动生成内容透明提示：草稿会标注 auto-filled 字段并提醒“可能不完整”
+- 创建阶段不自动写入用户记忆，`memory` 保持空模板
+
+### 已完成（v1.2.0）
+
+- 项目级自动初始化：首次运行自动创建 `./.claude/engram/`
+- 自动注入双起始包：`starter-complete`（完整示例）+ `starter-template`（说明模板）
+- MCP 工具（`install_engram` / `init_engram` / `finalize_engram_draft`）默认写入当前项目目录
+
 ### 计划中
 
-- `engram-server lint`：校验 uses 路径有效性、索引一致性
-- 章节化知识目录：大文档自动切分为子目录 + 章节索引
+- `engram-server lint --fix`：自动修复孤儿文件、无效索引、空文件
+- `search_engram_knowledge(name, query)`：服务端关键词扫描与段落返回
 - Engram 社区 registry
 
 ## 许可证

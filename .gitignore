@@ -19,6 +19,7 @@ build/
 # Local config
 .mcp.json
 .claude/
+notify.sh
 DEVELOPMENT_PLAN.md
 TODO.md
 【01】待办

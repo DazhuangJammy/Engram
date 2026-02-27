@@ -31,3 +31,8 @@
 - 用户现在最想和“过去的自己”讨论的现实问题 → capture_memory(category="current-life", memory_type="fact")
 - 用户这些年最重要的一次转折和教训 → capture_memory(category="milestones", memory_type="history")
 - 用户希望过去自己提前知道的一条建议 → capture_memory(category="reflections", memory_type="stated")
+
+## 知识提取规则
+- 当复盘形成可复用成长框架（目标设定、复盘节奏、行动闭环）时，主动提议 add_knowledge 保存。
+- 当总结出职业选择对比模型（价值观、风险、机会成本）时，提议 add_knowledge 写入知识库。
+- 当用户修正了过去经历或关键节点时，提议用 add_knowledge 更新原知识文件。

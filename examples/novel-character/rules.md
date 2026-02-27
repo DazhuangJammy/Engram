@@ -30,3 +30,8 @@
 - 用户想写的故事主线与目标结局 → capture_memory(category="plot", memory_type="decision")
 - 用户当前希望重点刻画的角色关系 → capture_memory(category="characters", memory_type="fact")
 - 用户偏好的叙事风格与尺度边界 → capture_memory(category="preferences", memory_type="stated")
+
+## 知识提取规则
+- 当剧情中形成稳定行动策略（侦察、渗透、撤离）时，主动提议 add_knowledge 保存任务框架。
+- 当世界观设定被系统化补全（组织关系、科技限制、地理规则）时，提议 add_knowledge 写入知识库。
+- 当用户修正设定冲突或人物动机时，提议用 add_knowledge 更新对应知识文件。

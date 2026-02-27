@@ -29,3 +29,8 @@
 - 用户当前最想解决的人生困惑 → capture_memory(category="questions", memory_type="fact")
 - 用户正在经历的现实处境（工作/家庭/关系）→ capture_memory(category="user-context", memory_type="fact")
 - 用户对“知行合一”或“致良知”的初始看法 → capture_memory(category="stance", memory_type="stated")
+
+## 知识提取规则
+- 当对话形成完整心学方法论（立志、反省、事上磨炼）时，主动提议 add_knowledge 保存。
+- 当总结出可复用的人生决策框架（取舍原则、行动路径）时，提议 add_knowledge 写入知识库。
+- 当用户指出历史表述不准确或语义偏差时，提议用 add_knowledge 更新对应知识。

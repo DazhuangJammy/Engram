@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import csv
+import json
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
 
 from engram_server.loader import EngramLoader
@@ -15,6 +19,7 @@ class EngramStats:
     memory_entry_count: int = 0
     memory_categories: dict[str, int] = field(default_factory=dict)
     memory_type_distribution: dict[str, int] = field(default_factory=dict)
+    recent_entries: list[RecentEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -71,6 +76,15 @@ def _scan_memory_index(
         )
         es.memory_entry_count += 1
         all_recent.append(
+            RecentEntry(
+                engram_name=engram_name,
+                category=cat,
+                timestamp=parsed["timestamp"],
+                memory_type=mtype,
+                summary=parsed["summary"],
+            )
+        )
+        es.recent_entries.append(
             RecentEntry(
                 engram_name=engram_name,
                 category=cat,
@@ -136,6 +150,7 @@ def gather_stats(loader: EngramLoader) -> StatsReport:
         if engram_dir is not None:
             memory_dir = engram_dir / "memory"
             _scan_memory_index(memory_dir, es, name, all_recent)
+            es.recent_entries.sort(key=lambda e: e.timestamp, reverse=True)
 
         report.engram_stats.append(es)
         report.total_knowledge_files += es.knowledge_count
@@ -197,6 +212,82 @@ def render_plain(report: StatsReport) -> str:
             )
 
     return "\n".join(lines)
+
+
+def render_json(report: StatsReport) -> str:
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "engrams": [],
+        "global_memory": {
+            "entry_count": report.global_memory.entry_count,
+            "categories": report.global_memory.categories,
+            "type_distribution": report.global_memory.type_distribution,
+        },
+    }
+
+    for es in report.engram_stats:
+        payload["engrams"].append(
+            {
+                "name": es.name,
+                "knowledge_count": es.knowledge_count,
+                "examples_count": es.examples_count,
+                "memory_count": es.memory_entry_count,
+                "memory_types": es.memory_type_distribution,
+                "recent_entries": [
+                    {
+                        "category": entry.category,
+                        "timestamp": entry.timestamp,
+                        "memory_type": entry.memory_type,
+                        "summary": entry.summary,
+                    }
+                    for entry in es.recent_entries[:5]
+                ],
+            }
+        )
+
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def render_csv(report: StatsReport) -> str:
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "name",
+            "knowledge_count",
+            "examples_count",
+            "memory_count",
+            "fact",
+            "preference",
+            "decision",
+            "history",
+            "general",
+            "inferred",
+            "stated",
+            "recent_date",
+        ]
+    )
+
+    for es in report.engram_stats:
+        dist = es.memory_type_distribution
+        writer.writerow(
+            [
+                es.name,
+                es.knowledge_count,
+                es.examples_count,
+                es.memory_entry_count,
+                dist.get("fact", 0),
+                dist.get("preference", 0),
+                dist.get("decision", 0),
+                dist.get("history", 0),
+                dist.get("general", 0),
+                dist.get("inferred", 0),
+                dist.get("stated", 0),
+                es.recent_entries[0].timestamp if es.recent_entries else "",
+            ]
+        )
+
+    return output.getvalue()
 
 
 def render_tui(report: StatsReport) -> None:

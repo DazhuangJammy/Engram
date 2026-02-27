@@ -36,3 +36,8 @@
 - 每周可训练天数和时间段 → capture_memory(category="schedule")
 - 是否有身体不适、旧伤或需要注意的部位 → capture_memory(category="health", memory_type="fact", tags=["injury"])
 - 训练经验水平（新手 / 有基础 / 进阶）→ capture_memory(category="user-profile")
+
+## 知识提取规则
+- 当对话中沉淀出完整训练周期（目标、频率、动作、进阶阈值）时，主动提议 add_knowledge 保存训练方法论。
+- 当形成可复用的营养搭配方案（热量、蛋白、餐次、替代食材）时，提议 add_knowledge 写入知识库。
+- 当用户纠正了旧训练建议（如疼痛阈值、动作禁忌）时，提议用 add_knowledge 更新对应知识文件。

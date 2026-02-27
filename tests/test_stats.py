@@ -1,9 +1,15 @@
+import json
 from pathlib import Path
 
+import pytest
+
 from engram_server.loader import EngramLoader
+from engram_server.server import build_parser
 from engram_server.stats import (
     StatsReport,
     gather_stats,
+    render_csv,
+    render_json,
     render_plain,
 )
 
@@ -119,3 +125,48 @@ def test_render_plain_empty() -> None:
 
     assert "Total engrams: 0" in output
     assert "Total memory entries: 0" in output
+
+
+def test_render_json_output_is_valid_and_complete(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    loader.capture_memory(
+        "test-expert",
+        "用户偏好晨练",
+        "preferences",
+        "偏好晨练",
+        memory_type="preference",
+    )
+
+    report = gather_stats(loader)
+    output = render_json(report)
+    data = json.loads(output)
+
+    assert "generated_at" in data
+    assert "engrams" in data
+    assert "global_memory" in data
+    assert len(data["engrams"]) == 1
+    engram = data["engrams"][0]
+    assert {
+        "name",
+        "knowledge_count",
+        "examples_count",
+        "memory_count",
+        "memory_types",
+        "recent_entries",
+    }.issubset(engram.keys())
+
+
+def test_render_csv_row_count_matches_engrams(tmp_path: Path) -> None:
+    _make_engram(tmp_path, "expert-a")
+    loader = _make_engram(tmp_path, "expert-b")
+    report = gather_stats(loader)
+
+    csv_text = render_csv(report)
+    lines = [line for line in csv_text.splitlines() if line.strip()]
+    assert len(lines) == report.total_engrams + 1
+
+
+def test_stats_output_flags_are_mutually_exclusive() -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["stats", "--json", "--csv"])

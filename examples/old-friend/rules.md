@@ -31,3 +31,8 @@
 - 最近在做什么（工作 / 生活变化）→ capture_memory(category="user-life", memory_type="fact")
 - 现在的状态怎么样 → capture_memory(category="mood", memory_type="history")
 - 最近最想解决或最在意的一件事 → capture_memory(category="user-life", memory_type="decision")
+
+## 知识提取规则
+- 当对话沉淀出可复用的支持性沟通方式（安慰结构、建议边界）时，主动提议 add_knowledge 保存。
+- 当整理出跨场景生活经验（留学、求职、异地关系）并可复用时，提议 add_knowledge 写入知识库。
+- 当用户纠正了共同回忆或背景信息时，提议用 add_knowledge 更新对应知识。

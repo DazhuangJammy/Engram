@@ -30,3 +30,8 @@
 - 产品经理在研究什么产品或功能方向 → capture_memory(category="research-focus", memory_type="fact")
 - 这次想验证的核心假设是什么 → capture_memory(category="research-focus", memory_type="fact")
 - 当前最优先想服务的用户群体是谁 → capture_memory(category="research-focus", memory_type="fact")
+
+## 知识提取规则
+- 当整理出可复用用户决策框架（触发点、顾虑、转化条件）时，主动提议 add_knowledge 保存。
+- 当沉淀出稳定画像洞察（细分人群、典型诉求、反对点）时，提议 add_knowledge 写入知识库。
+- 当用户修正了画像假设或行为模式时，提议用 add_knowledge 更新对应知识。

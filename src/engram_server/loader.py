@@ -527,20 +527,29 @@ class EngramLoader:
     def add_knowledge(
         self, name: str, filename: str, content: str, summary: str
     ) -> bool:
-        """Add a new knowledge file and append an entry to knowledge/_index.md.
+        """Add a new knowledge file and append an entry to an index.
 
-        filename may omit the .md extension — it will be added automatically.
+        filename supports nested paths like "训练基础/动作模式".
         """
         engram_dir = self._resolve_engram_dir(name)
         if engram_dir is None:
             return False
 
-        if not filename.endswith(".md"):
-            filename = f"{filename}.md"
+        normalized = filename.strip().replace("\\", "/")
+        if not normalized:
+            return False
+        if not normalized.endswith(".md"):
+            normalized = f"{normalized}.md"
 
-        knowledge_path = f"knowledge/{filename}"
-        target = self._resolve_file(name, knowledge_path)
-        if target is None:
+        relative = Path(normalized)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            return False
+
+        knowledge_rel = Path("knowledge") / relative
+        target = (engram_dir / knowledge_rel).resolve()
+        try:
+            target.relative_to(engram_dir)
+        except ValueError:
             return False
 
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -549,8 +558,23 @@ class EngramLoader:
         except OSError:
             return False
 
-        index_file = engram_dir / "knowledge" / "_index.md"
-        index_line = f"- `{knowledge_path}` - {summary.strip()}\n"
+        knowledge_root = engram_dir / "knowledge"
+        top_index = knowledge_root / "_index.md"
+        subdir_index = target.parent / "_index.md"
+
+        if target.parent != knowledge_root and subdir_index.is_file():
+            index_file = subdir_index
+        else:
+            index_file = top_index
+
+        index_file.parent.mkdir(parents=True, exist_ok=True)
+        if not index_file.exists():
+            try:
+                index_file.write_text("", encoding="utf-8")
+            except OSError:
+                return False
+
+        index_line = f"- `{knowledge_rel.as_posix()}` - {summary.strip()}\n"
         try:
             with index_file.open("a", encoding="utf-8") as f:
                 f.write(index_line)

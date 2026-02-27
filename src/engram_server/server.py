@@ -10,9 +10,19 @@ from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
+from engram_server.creator import (
+    build_engram_draft,
+    draft_response_payload,
+    materialize_draft,
+    parse_draft_payload,
+)
+from engram_server.lint import lint_engram
 from engram_server.loader import EngramLoader
+from engram_server.registry import fetch_registry, resolve_name, search_registry
 
 DEFAULT_PACKS_DIR = Path("~/.engram").expanduser()
+_PROJECT_BOOTSTRAP_COMPLETE_NAME = "starter-complete"
+_PROJECT_BOOTSTRAP_TEMPLATE_NAME = "starter-template"
 
 
 def _format_engrams(engrams: list[dict]) -> str:
@@ -60,6 +70,37 @@ def _find_template_dir() -> Path | None:
     return None
 
 
+def _is_url_source(source: str) -> bool:
+    return "://" in source or source.endswith(".git")
+
+
+def _load_registry_entries() -> list[dict]:
+    remote = fetch_registry()
+    if remote:
+        return remote
+
+    local_registry = Path(__file__).resolve().parents[2] / "registry.json"
+    if local_registry.is_file():
+        try:
+            raw = json.loads(local_registry.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                return [item for item in raw if isinstance(item, dict)]
+        except (OSError, json.JSONDecodeError):
+            return []
+    return []
+
+
+def _render_search_item(entry: dict) -> str:
+    name = str(entry.get("name", "")).strip()
+    description = str(entry.get("description", "")).strip()
+    author = str(entry.get("author", "")).strip()
+    tags = entry.get("tags", [])
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+    tags_str = ", ".join(str(tag) for tag in tags if str(tag).strip())
+    return f"{name} - {description} [{tags_str}] ({author})"
+
+
 def _build_loader_roots(
     packs_dir: Path | str,
     *,
@@ -88,6 +129,148 @@ def _build_loader_roots(
         seen.add(root)
         deduped.append(root)
     return deduped
+
+
+def _project_engram_dir(*, cwd: Path | None = None) -> Path:
+    project_root = (cwd or Path.cwd()).resolve()
+    return (project_root / ".claude" / "engram").resolve()
+
+
+def _has_engram_pack(packs_dir: Path) -> bool:
+    if not packs_dir.is_dir():
+        return False
+    return any(
+        entry.is_dir() and (entry / "meta.json").is_file()
+        for entry in packs_dir.iterdir()
+    )
+
+
+def _next_available_pack_name(packs_dir: Path, base_name: str) -> str:
+    if not (packs_dir / base_name).exists():
+        return base_name
+
+    idx = 2
+    while (packs_dir / f"{base_name}-{idx}").exists():
+        idx += 1
+    return f"{base_name}-{idx}"
+
+
+def _materialize_complete_starter_pack(target_dir: Path, name: str) -> None:
+    """Fill a starter pack with complete, runnable sample content."""
+    meta = {
+        "name": name,
+        "author": "engram-team",
+        "version": "1.0.0",
+        "description": "完整 Engram 示例：可直接加载并参考改造。",
+        "tags": ["starter", "complete", "example"],
+        "knowledge_count": 2,
+        "examples_count": 1,
+    }
+    (target_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    (target_dir / "role.md").write_text(
+        "# 角色定位\n"
+        "你是一个「项目教练」型专家，擅长把模糊目标拆成可执行步骤。\n\n"
+        "## 沟通风格\n"
+        "- 先给结论，再给步骤，再给风险提示。\n"
+        "- 每次回答都尽量给出可直接执行的下一步。\n",
+        encoding="utf-8",
+    )
+
+    (target_dir / "workflow.md").write_text(
+        "# 工作流程\n"
+        "1. 明确目标、边界和成功标准\n"
+        "2. 先交付最小可执行版本（MVP）\n"
+        "3. 根据反馈迭代，保持节奏可持续\n"
+        "4. 固化有效经验，沉淀为知识\n",
+        encoding="utf-8",
+    )
+
+    (target_dir / "rules.md").write_text(
+        "# 运作规则\n"
+        "- 信息不完整时先补关键上下文，再给建议\n"
+        "- 方案必须包含执行条件与回退条件\n"
+        "- 遇到高风险事项时明确提醒边界\n\n"
+        "## Onboarding\n"
+        "首次对话请自然收集并记录：\n"
+        "- 用户当前目标和期望时间\n"
+        "- 可投入的时间/资源\n"
+        "- 当前最大的阻碍是什么\n",
+        encoding="utf-8",
+    )
+
+    (target_dir / "knowledge" / "_index.md").write_text(
+        "## 知识索引\n\n"
+        "- `knowledge/目标拆解法.md` - 如何把模糊目标拆成可执行任务。\n"
+        "- `knowledge/周迭代复盘法.md` - 每周复盘与滚动调整的方法。\n",
+        encoding="utf-8",
+    )
+    (target_dir / "knowledge" / "目标拆解法.md").write_text(
+        "# 目标拆解法\n\n"
+        "1. 定义结果：一句话说清最终状态。\n"
+        "2. 定义约束：时间、预算、能力边界。\n"
+        "3. 拆里程碑：按周划分阶段性结果。\n"
+        "4. 拆行动：每个里程碑拆成 3-5 个动作。\n",
+        encoding="utf-8",
+    )
+    (target_dir / "knowledge" / "周迭代复盘法.md").write_text(
+        "# 周迭代复盘法\n\n"
+        "- 本周进展：完成了什么、没完成什么。\n"
+        "- 关键阻碍：为什么卡住。\n"
+        "- 下周调整：保留、删除、替换哪些动作。\n"
+        "- 风险控制：触发回退条件时如何降级执行。\n",
+        encoding="utf-8",
+    )
+
+    (target_dir / "examples" / "_index.md").write_text(
+        "## 案例索引\n\n"
+        "- `examples/完整案例.md` - 从模糊目标到四周执行计划的完整示例。\n"
+        "  uses: knowledge/目标拆解法.md, knowledge/周迭代复盘法.md\n",
+        encoding="utf-8",
+    )
+    (target_dir / "examples" / "完整案例.md").write_text(
+        "---\n"
+        "id: complete_starter_case\n"
+        "title: 四周执行计划示例\n"
+        "uses:\n"
+        "  - knowledge/目标拆解法.md\n"
+        "  - knowledge/周迭代复盘法.md\n"
+        "tags:\n"
+        "  - starter\n"
+        "  - complete\n"
+        "updated_at: 2026-02-27\n"
+        "---\n\n"
+        "问题描述：用户目标不清晰，执行三天就中断。\n"
+        "评估过程：先明确目标与约束，再识别中断触发点。\n"
+        "最终方案：拆成四周里程碑，每周只保留 3 个关键动作。\n"
+        "结果复盘：第 2 周开始稳定执行，第 4 周可自主滚动规划。\n",
+        encoding="utf-8",
+    )
+
+
+def _ensure_project_engram_workspace(*, cwd: Path | None = None) -> Path:
+    """Create .claude/engram in the current project and bootstrap two starter packs."""
+    project_engram = _project_engram_dir(cwd=cwd)
+    project_engram.mkdir(parents=True, exist_ok=True)
+
+    if _has_engram_pack(project_engram):
+        return project_engram
+
+    template_name = _next_available_pack_name(
+        project_engram, _PROJECT_BOOTSTRAP_TEMPLATE_NAME
+    )
+    init_engram_pack(template_name, project_engram)
+
+    complete_name = _next_available_pack_name(
+        project_engram, _PROJECT_BOOTSTRAP_COMPLETE_NAME
+    )
+    result = init_engram_pack(complete_name, project_engram)
+    if result.get("ok"):
+        _materialize_complete_starter_pack(project_engram / complete_name, complete_name)
+    return project_engram
 
 
 def install_engram_from_source(source: str, packs_dir: Path) -> dict[str, str | bool]:
@@ -141,7 +324,12 @@ def install_engram_from_source(source: str, packs_dir: Path) -> dict[str, str | 
     }
 
 
-def init_engram_pack(name: str, packs_dir: Path) -> dict[str, str | bool]:
+def init_engram_pack(
+    name: str,
+    packs_dir: Path,
+    *,
+    nested: bool = False,
+) -> dict[str, str | bool]:
     if not _is_valid_engram_name(name):
         return {"ok": False, "message": f"初始化失败：非法名称 {name}"}
 
@@ -157,6 +345,9 @@ def init_engram_pack(name: str, packs_dir: Path) -> dict[str, str | bool]:
         return {"ok": False, "message": "初始化失败：未找到模板目录。"}
 
     shutil.copytree(template_dir, target_dir)
+
+    if nested:
+        _apply_nested_template(target_dir)
 
     meta_path = target_dir / "meta.json"
     try:
@@ -175,6 +366,39 @@ def init_engram_pack(name: str, packs_dir: Path) -> dict[str, str | bool]:
     )
 
     return {"ok": True, "message": f"初始化成功：{target_dir}"}
+
+
+def _apply_nested_template(target_dir: Path) -> None:
+    knowledge_dir = target_dir / "knowledge"
+    grouped_dir = knowledge_dir / "分组示例"
+    grouped_dir.mkdir(parents=True, exist_ok=True)
+
+    top_index = knowledge_dir / "_index.md"
+    top_index.write_text(
+        "## 知识索引\n\n"
+        "### 基础主题\n"
+        "- `knowledge/主题A.md` - 主题A基础知识。\n"
+        "- `knowledge/主题B.md` - 主题B基础知识。\n\n"
+        "### 分组目录\n"
+        "- `knowledge/分组示例/_index.md` - 分组索引入口。\n"
+        "  → 详见 knowledge/分组示例/_index.md\n",
+        encoding="utf-8",
+    )
+
+    nested_index = grouped_dir / "_index.md"
+    nested_index.write_text(
+        "## 分组示例索引\n\n"
+        "- `knowledge/分组示例/示例知识.md` - 分组内知识样例。\n",
+        encoding="utf-8",
+    )
+
+    nested_file = grouped_dir / "示例知识.md"
+    if not nested_file.exists():
+        nested_file.write_text(
+            "# 示例知识\n\n"
+            "在这里沉淀该分组下的系统性知识。",
+            encoding="utf-8",
+        )
 
 
 def _build_engram_system_prompt(engrams: list[dict]) -> str:
@@ -308,9 +532,187 @@ is blocked."""
 
     @app.tool()
     def install_engram(source: str) -> str:
-        """Install an Engram pack from git URL."""
-        result = install_engram_from_source(source=source, packs_dir=packs_dir)
+        """Install an Engram pack from git URL or registry name."""
+        if _is_url_source(source):
+            install_source = source
+        else:
+            entries = _load_registry_entries()
+            install_source = resolve_name(source, entries)
+            if install_source is None:
+                return f"安装失败：未在 registry 中找到 {source}"
+
+        result = install_engram_from_source(source=install_source, packs_dir=packs_dir)
         return str(result["message"])
+
+    @app.tool()
+    def init_engram(name: str, nested: bool = False) -> str:
+        """Initialize a new Engram from template.
+
+If nested=True, generates a template with grouped knowledge indexes."""
+        result = init_engram_pack(name, packs_dir, nested=nested)
+        return str(result["message"])
+
+    @app.tool()
+    def lint_engrams(name: str | None = None) -> str:
+        """Run consistency checks for one or all Engrams.
+
+Returns per-Engram error/warning counts and detailed issues."""
+        if name:
+            targets = [name]
+        else:
+            targets = [item["name"] for item in loader.list_engrams()]
+
+        if not targets:
+            return "暂无可校验 Engram。"
+
+        lines: list[str] = []
+        total_errors = 0
+        total_warnings = 0
+
+        for target in targets:
+            engram_dir = loader._resolve_engram_dir(target)
+            if engram_dir is None:
+                lines.append(f"{target}: 1 errors, 0 warnings")
+                lines.append("  [error] .: 未找到 Engram")
+                total_errors += 1
+                continue
+
+            messages = lint_engram(engram_dir)
+            error_count = sum(1 for m in messages if m.level == "error")
+            warning_count = sum(1 for m in messages if m.level == "warning")
+            total_errors += error_count
+            total_warnings += warning_count
+
+            lines.append(f"{target}: {error_count} errors, {warning_count} warnings")
+            for msg in messages:
+                lines.append(f"  [{msg.level}] {msg.file_path}: {msg.message}")
+
+        lines.append(
+            f"总计: {len(targets)} Engram, {total_errors} errors, {total_warnings} warnings"
+        )
+        return "\n".join(lines)
+
+    @app.tool()
+    def search_engrams(query: str) -> str:
+        """Search Engram registry entries by name/description/tags."""
+        entries = _load_registry_entries()
+        matched = search_registry(query, entries)
+        if not matched:
+            return "未找到匹配的 Engram"
+        return "\n".join(_render_search_item(item) for item in matched)
+
+    @app.tool()
+    def stats_engrams(format: str = "plain") -> str:
+        """Get Engram statistics in plain/json/csv format."""
+        from engram_server.stats import gather_stats, render_csv, render_json, render_plain
+
+        report = gather_stats(loader)
+        normalized = format.strip().lower()
+        if normalized in {"plain", ""}:
+            return render_plain(report)
+        if normalized == "json":
+            return render_json(report)
+        if normalized == "csv":
+            return render_csv(report)
+        return "不支持的 format。可选：plain/json/csv"
+
+    @app.tool()
+    def create_engram_assistant(
+        mode: str,
+        name: str | None = None,
+        topic: str | None = None,
+        audience: str | None = None,
+        style: str | None = None,
+        constraints: str | None = None,
+        language: str = "zh-CN",
+        conversation: str | None = None,
+    ) -> str:
+        """Generate an Engram draft from conversation or guided inputs.
+
+mode:
+  - "from_conversation": summarize current dialog into a draft
+  - "guided": build from user intent fields (auto-fill when missing)"""
+        try:
+            draft = build_engram_draft(
+                mode=mode,
+                name=name,
+                topic=topic,
+                audience=audience,
+                style=style,
+                constraints=constraints,
+                language=language,
+                conversation=conversation,
+            )
+        except ValueError as exc:
+            return f"草稿生成失败：{exc}"
+
+        payload = draft_response_payload(draft)
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    @app.tool()
+    def finalize_engram_draft(
+        draft_json: str,
+        name: str | None = None,
+        nested: bool = True,
+        confirm: bool = True,
+    ) -> str:
+        """Create an Engram pack from a confirmed draft.
+
+Set confirm=False to cancel (no files written)."""
+        if not confirm:
+            return "已取消创建：未确认落盘。"
+
+        try:
+            draft = parse_draft_payload(draft_json)
+        except (ValueError, json.JSONDecodeError):
+            return "落盘失败：draft_json 不是合法草稿 JSON。"
+
+        draft_name = str(draft.get("meta", {}).get("name", "")).strip()
+        target_name = (name or draft_name).strip()
+        if not _is_valid_engram_name(target_name):
+            return f"落盘失败：非法名称 {target_name}"
+
+        result = init_engram_pack(target_name, packs_dir, nested=nested)
+        if not result.get("ok"):
+            return str(result.get("message", "落盘失败"))
+
+        engram_dir = loader._resolve_engram_dir(target_name)
+        if engram_dir is None:
+            return "落盘失败：创建目录后无法定位 Engram。"
+
+        draft.setdefault("meta", {})
+        draft["meta"]["name"] = target_name
+        draft["meta"].setdefault("description", f"{target_name} 自动生成专家包")
+        draft["meta"].setdefault("author", "auto-generated")
+        draft["meta"].setdefault("version", "1.0.0")
+        draft["meta"].setdefault("tags", [])
+        draft["meta"].setdefault("knowledge_count", len(draft.get("knowledge", [])))
+        draft["meta"].setdefault("examples_count", len(draft.get("examples", [])))
+
+        try:
+            materialize_draft(engram_dir, draft)
+        except Exception as exc:  # noqa: BLE001
+            shutil.rmtree(engram_dir, ignore_errors=True)
+            return f"落盘失败：写入草稿时发生错误：{exc}"
+
+        messages = lint_engram(engram_dir)
+        error_count = sum(1 for m in messages if m.level == "error")
+        warning_count = sum(1 for m in messages if m.level == "warning")
+
+        lines = [
+            f"创建完成：{target_name}",
+            f"校验结果：{error_count} errors, {warning_count} warnings",
+        ]
+        for msg in messages:
+            lines.append(f"- [{msg.level}] {msg.file_path}: {msg.message}")
+
+        if error_count > 0:
+            lines.append("⚠️ 存在 error，请修复后再投入使用。")
+        elif warning_count > 0:
+            lines.append("⚠️ 存在 warning，可继续使用，建议后续优化。")
+        else:
+            lines.append("✅ 草稿已通过 lint 校验。")
+        return "\n".join(lines)
 
     @app.tool()
     def write_engram_file(
@@ -497,13 +899,14 @@ Args:
 def run_server(packs_dir: Path) -> None:
     packs_dir = packs_dir.expanduser()
     packs_dir.mkdir(parents=True, exist_ok=True)
+    project_packs = _ensure_project_engram_workspace()
 
     loader_roots = _build_loader_roots(packs_dir)
     loader = EngramLoader(
         packs_dir=loader_roots,
         default_packs_dir=packs_dir,
     )
-    app = create_mcp_app(loader=loader, packs_dir=packs_dir)
+    app = create_mcp_app(loader=loader, packs_dir=project_packs)
     app.run(transport="stdio")
 
 
@@ -517,17 +920,36 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="List installed Engrams")
     list_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
 
-    install_parser = subparsers.add_parser("install", help="Install Engram from git URL")
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Install Engram from git URL or registry name",
+    )
     install_parser.add_argument("source")
     install_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
 
     init_parser = subparsers.add_parser("init", help="Create a new Engram from template")
     init_parser.add_argument("name")
     init_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
+    init_parser.add_argument(
+        "--nested",
+        action="store_true",
+        help="Create a template with nested knowledge index directories",
+    )
 
     stats_parser = subparsers.add_parser("stats", help="Show Engram statistics")
     stats_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
-    stats_parser.add_argument("--tui", action="store_true", help="Rich TUI output")
+    stats_group = stats_parser.add_mutually_exclusive_group()
+    stats_group.add_argument("--json", action="store_true", help="JSON output")
+    stats_group.add_argument("--csv", action="store_true", help="CSV output")
+    stats_group.add_argument("--tui", action="store_true", help="Rich TUI output")
+
+    lint_parser = subparsers.add_parser("lint", help="Validate Engram data consistency")
+    lint_parser.add_argument("name", nargs="?")
+    lint_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
+
+    search_parser = subparsers.add_parser("search", help="Search Engrams from registry")
+    search_parser.add_argument("query")
+    search_parser.add_argument("--packs-dir", default=str(DEFAULT_PACKS_DIR))
 
     return parser
 
@@ -554,21 +976,41 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "install":
-        result = install_engram_from_source(args.source, Path(args.packs_dir))
+        source = args.source
+        if _is_url_source(source):
+            install_source = source
+        else:
+            entries = _load_registry_entries()
+            install_source = resolve_name(source, entries)
+            if install_source is None:
+                print(f"安装失败：未在 registry 中找到 {source}")
+                raise SystemExit(1)
+
+        result = install_engram_from_source(install_source, Path(args.packs_dir))
         print(result["message"])
         if not result["ok"]:
             raise SystemExit(1)
         return
 
     if args.command == "init":
-        result = init_engram_pack(args.name, Path(args.packs_dir))
+        result = init_engram_pack(
+            args.name,
+            Path(args.packs_dir),
+            nested=args.nested,
+        )
         print(result["message"])
         if not result["ok"]:
             raise SystemExit(1)
         return
 
     if args.command == "stats":
-        from engram_server.stats import gather_stats, render_plain, render_tui
+        from engram_server.stats import (
+            gather_stats,
+            render_csv,
+            render_json,
+            render_plain,
+            render_tui,
+        )
 
         packs_dir = Path(args.packs_dir)
         loader = EngramLoader(
@@ -578,8 +1020,56 @@ def main(argv: list[str] | None = None) -> None:
         report = gather_stats(loader)
         if args.tui:
             render_tui(report)
+        elif args.json:
+            print(render_json(report))
+        elif args.csv:
+            print(render_csv(report), end="")
         else:
             print(render_plain(report))
+        return
+
+    if args.command == "lint":
+        packs_dir = Path(args.packs_dir)
+        loader = EngramLoader(
+            packs_dir=_build_loader_roots(packs_dir),
+            default_packs_dir=packs_dir,
+        )
+
+        if args.name:
+            targets = [args.name]
+        else:
+            targets = [item["name"] for item in loader.list_engrams()]
+
+        total_errors = 0
+        for name in targets:
+            engram_dir = loader._resolve_engram_dir(name)
+            if engram_dir is None:
+                print(f"{name}: 1 errors, 0 warnings")
+                print("  [error] .: 未找到 Engram")
+                total_errors += 1
+                continue
+
+            messages = lint_engram(engram_dir)
+            error_count = sum(1 for m in messages if m.level == "error")
+            warning_count = sum(1 for m in messages if m.level == "warning")
+            print(f"{name}: {error_count} errors, {warning_count} warnings")
+            for msg in messages:
+                print(f"  [{msg.level}] {msg.file_path}: {msg.message}")
+            total_errors += error_count
+
+        if total_errors > 0:
+            raise SystemExit(1)
+        return
+
+    if args.command == "search":
+        _ = args.packs_dir  # kept for CLI interface consistency
+        entries = _load_registry_entries()
+        matched = search_registry(args.query, entries)
+        if not matched:
+            print("未找到匹配的 Engram")
+            return
+        for item in matched:
+            print(_render_search_item(item))
         return
 
     parser.print_help()

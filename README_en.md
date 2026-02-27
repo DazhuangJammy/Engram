@@ -35,7 +35,7 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 ## Features
 
 - Zero vector dependencies: no chromadb / litellm, only depends on `mcp`
-- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `delete_memory`, `correct_memory`, `add_knowledge`, `install_engram`
+- MCP tools: `ping`, `list_engrams`, `get_engram_info`, `load_engram`, `read_engram_file`, `write_engram_file`, `capture_memory`, `consolidate_memory`, `delete_memory`, `correct_memory`, `add_knowledge`, `install_engram`, `init_engram`, `lint_engrams`, `search_engrams`, `stats_engrams`, `create_engram_assistant`, `finalize_engram_draft`
 - Index-driven loading:
   - `load_engram` returns role/workflow/rules + knowledge index + examples index + dynamic memory index + global user memory
   - `read_engram_file` reads full knowledge or example files on demand
@@ -45,8 +45,8 @@ Works with all MCP-compatible clients: Claude Desktop / Claude Code, Cursor, Win
 - Tiered index: `_index.md` keeps last 50 entries (hot layer); full history in `_index_full.md` (cold layer)
 - Engram inheritance: `meta.json` supports `extends` field to merge parent knowledge index
 - Cold-start onboarding: `## Onboarding` block in `rules.md` triggers first-session info collection
-- CLI commands: `serve` / `list` / `install` / `init` / `stats`
-- Stats dashboard: `engram-server stats` for memory statistics, `--tui` for rich rendering
+- CLI commands: `serve` / `list` / `search` / `install` / `init` / `lint` / `stats`
+- Stats dashboard: `engram-server stats` supports plain text / `--json` / `--csv` / `--tui`
 
 ## Design Philosophy: Index-Driven Layered Lazy Loading
 
@@ -81,6 +81,28 @@ Layer 3: Written during conversation (LLM captures important info proactively)
 
 The skeleton stays loaded at all times. Knowledge is controlled via "index with inline summaries + full text on demand." No matter how large an Engram gets, the injected content per turn stays manageable.
 
+## Grouped Indexes (Nested Index)
+
+When your knowledge base grows, use nested folders:
+
+```text
+knowledge/
+  _index.md
+  training-basics/
+    _index.md
+    squat-pattern.md
+  nutrition-strategy/
+    _index.md
+    bulking-meal-plan.md
+```
+
+Top-level `_index.md` can reference grouped indexes like `→ 详见 knowledge/training-basics/_index.md`. `add_knowledge` supports `"subdir/filename"` and appends to the sub-index when `_index.md` exists in that subdirectory.
+
+LLM 3-step workflow:
+1. Use `load_engram` to read top-level `knowledge/_index.md`
+2. If a grouped entry appears, call `read_engram_file(name, "knowledge/xxx/_index.md")`
+3. Then read concrete files on demand, e.g. `knowledge/xxx/topic.md`
+
 ## Installation
 
 ### Prerequisites
@@ -107,9 +129,10 @@ claude mcp add --scope user engram-server -- uvx --from git+https://github.com/D
 
 This command will:
 - Write the MCP config globally (available in all projects)
-- No code is added to your project
+- On first run inside a project, automatically create `./.claude/engram/`
+- Bootstrap two starter packs: `starter-complete` (fully runnable) and `starter-template` (instruction/template)
 - Each time Claude Code starts, it automatically pulls the latest version from GitHub
-- Engram packs are stored in `~/.engram` by default
+- `~/.engram` can still be used as a shared/fallback directory (via `--packs-dir`)
 
 After installation, **restart Claude Code** to start using it.
 
@@ -119,7 +142,7 @@ After installation, **restart Claude Code** to start using it.
 claude mcp remove --scope user engram-server
 ```
 
-> Uninstalling only removes the MCP config — your Engram data (`~/.engram/`) is preserved. To fully clean up data, run `rm -rf ~/.engram` manually.
+> Uninstalling only removes the MCP config. It does not delete Engram data in either `./.claude/engram/` (project-level) or optional `~/.engram/`.
 
 ## Quick Start
 
@@ -128,30 +151,80 @@ claude mcp remove --scope user engram-server
 Add the following prompt to the beginning of your project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex) to let AI automatically discover and use Engrams:
 
 ```text
-You have an expert memory system available. Call list_engrams() from the engram-server MCP at the start of each conversation to see available experts.
-- When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
-- When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
-- For time-sensitive memories ("user is studying for an exam", "user is injured"), add an expires param (YYYY-MM-DD, e.g. "2026-06-01"). Expired entries are archived and hidden from future loads.
-- If load_engram returns an "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
-- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) to save it. Use memory_type to label the semantic type (preference/fact/decision/history/general/inferred/stated) and tags for filtering.
-- If load_engram returns a "💡 N memories total" hint (hot-layer total ≥ 30), first call read_engram_file(name, "memory/{category}.md") to read the busiest category, then call consolidate_memory(name, category, consolidated_content, summary) to compress. You must compose consolidated_content yourself. Only supported for expert memory, not global memory.
-- Users can also specify an expert directly with @expert-name.
-- When you call any MCP tool, tell the user which MCP and which expert you used.
-- After load_engram returns a knowledge index, if the summaries aren't enough to answer, call read_engram_file(name, "knowledge/xxx.md") to read the full file.
-- When the user asks to delete a memory, call delete_memory(name, category, summary). Only for expert memory, not global memory.
-- When the user corrects a memory, call correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags). Only for expert memory, not global memory.
-- When conversation produces knowledge worth keeping long-term (not personal user info), call add_knowledge(name, filename, content, summary).
-- To browse full memory history, call read_engram_file(name, "memory/_index_full.md") to read the cold-layer index.
-- If load_engram returns an "Inherited Knowledge Index" section, call read_engram_file(parent_name, "knowledge/xxx.md") to read parent knowledge files.
-- When the user asks about an engram's details, call get_engram_info(name).
-- When the user wants to install a new engram, call install_engram(source) where source is a git URL.
-- To directly edit an engram's role.md / workflow.md / rules.md or other non-knowledge files, call write_engram_file(name, path, content, mode).
-- When the user asks about memory statistics or wants to know how many memories exist, suggest running `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` or `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui` in the terminal.
+你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 MCP 中的 list_engrams() 查看可用专家。
+
+# 自动执行规则（傻瓜式）
+- 默认原则：能由模型直接完成的事，不让用户手动执行命令；优先直接调用 MCP 工具。
+- 除非环境/权限阻塞，否则不要让用户“自己去终端跑命令”。
+- 如果调用了 MCP，回复时要告诉用户调用了什么 MCP 和哪个专家。
+- 首次进入新项目时，默认检查并使用 `./.claude/engram`。
+- 目录策略统一为“项目级优先，`~/.engram` 为共享/回退目录”。
+
+## 自然语言意图 -> MCP 自动映射
+- 用户说“找/查/推荐某类 Engram” -> 自动调用 search_engrams(query)
+- 用户说“安装某个 Engram” -> 自动调用 install_engram(source-or-name)
+- 安装默认写入当前项目 `./.claude/engram`，不是默认全局目录。
+- 用户说“初始化当前项目 engram” -> 优先检查 `starter-complete` / `starter-template` 是否存在。
+- install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
+- 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
+- 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+
+## 专家加载与知识读取
+- 用户问题匹配某个专家时，调用 load_engram(name, query)。
+- load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
+- 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
+
+## 记忆写入规则
+- 发现跨专家通用信息（年龄、城市、职业、语言偏好等） -> capture_memory(..., is_global=True)
+- 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
+- load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
+- 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
+- 用户要求删除记忆 -> delete_memory(name, category, summary)
+- 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
+- 记忆较多查历史 -> read_engram_file(name, "memory/_index_full.md")
+
+## 知识写入规则
+- 对话中形成系统性可复用知识（方法论/对比分析/决策框架）时，先询问用户是否写入知识库，确认后 add_knowledge。
+- 用户纠正知识库错误时，提议并执行 add_knowledge 更新。
+- add_knowledge 支持分组路径：filename 可用 "子目录/文件名"（如 "训练基础/深蹲模式"）。
+
+## 创建 Engram 助手（双模式）
+- mode=from_conversation：把当前对话自动整理成 Engram 草稿。
+- mode=guided：一步步引导用户填写；用户说“没有/你来”时自动补全。
+- 统一流程：
+  1) 先调用 create_engram_assistant(...) 生成草稿并回显
+  2) 用户确认后调用 finalize_engram_draft(draft_json, confirm=True)
+  3) finalize 后必须看 lint 结果（errors 必须先修复）
+- 自动生成内容时必须提示：内容可能不完整，建议用户补充。
+- 创建阶段不自动生成用户记忆条目；memory 保持空模板。
+
+## 一致性校验
+- 只要模型新增/修改了 knowledge/examples/index/meta/rules，完成后自动调用 lint_engrams(name)。
+- 解释规则：
+  - error > 0：阻断，先修复再交付。
+  - 仅 warning：可交付，但需向用户说明风险。
+
+## 其他
+- 用户也可以用 @专家名 直接指定专家。
+- 用户询问某个 engram 详细信息时，调用 get_engram_info(name)。
+- 需要直接改 role.md/workflow.md/rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)。
+- 新增/修改案例文件时，确保 frontmatter 字段齐全（id/title/uses/tags/updated_at），id 全局唯一，updated_at 用当天日期。
+- 多案例命中时，先按 tags 匹配，再参考 updated_at 选更近的案例。
+- 回复中引用案例时优先带 title + id，减少歧义。
+- 若发现 frontmatter 缺字段或 uses 指向不存在文件，先修复再继续回答。
 ```
 
 ### 4. Restart Your AI Client and Start Using
 
+On first MCP run in a project, you'll automatically get:
+- `./.claude/engram/starter-complete` (complete sample Engram, directly loadable)
+- `./.claude/engram/starter-template` (instruction/template Engram for customization)
+
 ## CLI Usage
+
+> Note: when running via MCP, the server now prioritizes project-local `./.claude/engram/`. CLI examples below are for manually managing a specific directory (such as shared `~/.engram`).
 
 Start MCP stdio server (default command):
 
@@ -171,10 +244,10 @@ List installed Engrams:
 engram-server list --packs-dir ~/.engram
 ```
 
-Install Engram from git:
+Install Engram from git URL or registry name:
 
 ```bash
-engram-server install <git-url> --packs-dir ~/.engram
+engram-server install <git-url|engram-name> --packs-dir ~/.engram
 ```
 
 Initialize a new Engram template:
@@ -183,10 +256,40 @@ Initialize a new Engram template:
 engram-server init my-expert --packs-dir ~/.engram
 ```
 
+Initialize a template with nested knowledge indexes:
+
+```bash
+engram-server init my-expert --nested --packs-dir ~/.engram
+```
+
+Search Engrams in the registry:
+
+```bash
+engram-server search fitness --packs-dir ~/.engram
+```
+
+Run data consistency checks:
+
+```bash
+engram-server lint [name] --packs-dir ~/.engram
+```
+
 View memory statistics (plain text):
 
 ```bash
 uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats
+```
+
+View memory statistics (JSON):
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --json
+```
+
+View memory statistics (CSV):
+
+```bash
+uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --csv
 ```
 
 View memory statistics (Rich rendering):
@@ -203,6 +306,74 @@ uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
 > # Then just use: engram stats / engram stats --tui / engram list
 > ```
 
+### How To Use New Features (v0.9.0 / v1.0.0 / v1.1.0)
+
+1) Data validation (`lint`)
+
+```bash
+# Validate all Engrams
+engram-server lint --packs-dir ~/.engram
+
+# Validate one Engram
+engram-server lint fitness-coach --packs-dir ~/.engram
+```
+
+> Exit code: returns 1 if any error exists; returns 0 when only warnings exist.
+
+2) Stats export (JSON / CSV)
+
+```bash
+engram-server stats --json --packs-dir ~/.engram
+engram-server stats --csv --packs-dir ~/.engram
+```
+
+3) Search + install from Registry
+
+```bash
+# Search first
+engram-server search fitness --packs-dir ~/.engram
+
+# Install by name (resolved to source URL automatically)
+engram-server install fitness-coach --packs-dir ~/.engram
+```
+
+4) Initialize nested-index template
+
+```bash
+engram-server init my-expert --nested --packs-dir ~/.engram
+```
+
+5) Write grouped knowledge in conversation (MCP)
+
+When calling `add_knowledge(name, filename, content, summary)`, `filename` can be nested, for example:
+
+```text
+filename = "training-basics/squat-pattern"
+```
+
+It writes to `knowledge/training-basics/squat-pattern.md`; if `knowledge/training-basics/_index.md` exists, the entry is appended there first.
+
+### Foolproof Engram Creation (Two Modes)
+
+When the user says “create an Engram” in natural language, the model should run this flow automatically:
+
+1) Generate draft  
+- Conversation-to-draft: `create_engram_assistant(mode=\"from_conversation\", ...)`
+- Guided creation: `create_engram_assistant(mode=\"guided\", ...)`
+
+2) Show summary and confirm  
+- Show name, knowledge files, example files, and auto-filled fields
+- Clearly state that auto-generated content may be incomplete
+
+3) Finalize after confirmation  
+- `finalize_engram_draft(draft_json, confirm=True, nested=True)`
+- The tool runs lint automatically and returns errors/warnings
+- If errors exist, fix before delivery
+
+Example user intents:
+- “Turn our discussion into an Engram” (from_conversation)
+- “Create an interviewer Engram and fill details for me” (guided + auto-fill)
+
 ## MCP Tools
 
 | Tool | Parameters | Description |
@@ -218,7 +389,13 @@ uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui
 | `delete_memory` | `name`, `category`, `summary` | Delete a specific memory entry by summary, removing it from both the index and category file |
 | `correct_memory` | `name`, `category`, `old_summary`, `new_content`, `new_summary`, `memory_type`, `tags` | Correct an existing memory entry, updating both the index and category file |
 | `add_knowledge` | `name`, `filename`, `content`, `summary` | Add a new knowledge file to an Engram and update the knowledge index automatically |
-| `install_engram` | `source` | Install Engram pack from git URL |
+| `install_engram` | `source` | Install Engram pack from git URL or registry name |
+| `init_engram` | `name`, `nested` | Initialize a new Engram through MCP (optionally with nested knowledge indexes) |
+| `lint_engrams` | `name?` | Run consistency checks through MCP and return error/warning details |
+| `search_engrams` | `query` | Search registry entries through MCP |
+| `stats_engrams` | `format` | Get stats through MCP with `plain/json/csv` formats |
+| `create_engram_assistant` | `mode`, `name?`, `topic?`, `audience?`, `style?`, `constraints?`, `language?`, `conversation?` | Generate an Engram draft (from_conversation / guided), with optional auto-fill for missing fields |
+| `finalize_engram_draft` | `draft_json`, `name?`, `nested`, `confirm` | Finalize confirmed draft into files and run lint automatically |
 
 ### `load_engram` Response Format
 
@@ -632,25 +809,69 @@ Add the following prompt to the beginning of your AI tool's instruction file:
 | Others | Your tool's system prompt configuration |
 
 ```text
-You have an expert memory system available. Call list_engrams() from the engram-server MCP at the start of each conversation to see available experts.
-- When a user's question matches an expert, call load_engram(name, query) to load its knowledge.
-- When you identify cross-expert user info (age, city, job, language preferences, etc.), call capture_memory(..., is_global=True) to write to global memory.
-- For time-sensitive memories ("user is studying for an exam", "user is injured"), add an expires param (YYYY-MM-DD, e.g. "2026-06-01"). Expired entries are archived and hidden from future loads.
-- If load_engram returns an "Onboarding" section, naturally collect the listed info during conversation and capture_memory.
-- When you identify important user preferences or key info during conversation, call capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global) to save it. Use memory_type to label the semantic type (preference/fact/decision/history/general/inferred/stated) and tags for filtering.
-- If load_engram returns a "💡 N memories total" hint (hot-layer total ≥ 30), first call read_engram_file(name, "memory/{category}.md") to read the busiest category, then call consolidate_memory(name, category, consolidated_content, summary) to compress. You must compose consolidated_content yourself. Only supported for expert memory, not global memory.
-- Users can also specify an expert directly with @expert-name.
-- When you call any MCP tool, tell the user which MCP and which expert you used.
-- After load_engram returns a knowledge index, if the summaries aren't enough to answer, call read_engram_file(name, "knowledge/xxx.md") to read the full file.
-- When the user asks to delete a memory, call delete_memory(name, category, summary). Only for expert memory, not global memory.
-- When the user corrects a memory, call correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags). Only for expert memory, not global memory.
-- When conversation produces knowledge worth keeping long-term (not personal user info), call add_knowledge(name, filename, content, summary).
-- To browse full memory history, call read_engram_file(name, "memory/_index_full.md") to read the cold-layer index.
-- If load_engram returns an "Inherited Knowledge Index" section, call read_engram_file(parent_name, "knowledge/xxx.md") to read parent knowledge files.
-- When the user asks about an engram's details, call get_engram_info(name).
-- When the user wants to install a new engram, call install_engram(source) where source is a git URL.
-- To directly edit an engram's role.md / workflow.md / rules.md or other non-knowledge files, call write_engram_file(name, path, content, mode).
-- When the user asks about memory statistics or wants to know how many memories exist, suggest running `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats` or `uvx --from git+https://github.com/DazhuangJammy/Engram engram-server stats --tui` in the terminal.
+你有一个专家记忆系统可用。对话开始时先调用 engram-server 这个 MCP 中的 list_engrams() 查看可用专家。
+
+# 自动执行规则（傻瓜式）
+- 默认原则：能由模型直接完成的事，不让用户手动执行命令；优先直接调用 MCP 工具。
+- 除非环境/权限阻塞，否则不要让用户“自己去终端跑命令”。
+- 如果调用了 MCP，回复时要告诉用户调用了什么 MCP 和哪个专家。
+- 首次进入新项目时，默认检查并使用 `./.claude/engram`。
+- 目录策略统一为“项目级优先，`~/.engram` 为共享/回退目录”。
+
+## 自然语言意图 -> MCP 自动映射
+- 用户说“找/查/推荐某类 Engram” -> 自动调用 search_engrams(query)
+- 用户说“安装某个 Engram” -> 自动调用 install_engram(source-or-name)
+- 安装默认写入当前项目 `./.claude/engram`，不是默认全局目录。
+- 用户说“初始化当前项目 engram” -> 优先检查 `starter-complete` / `starter-template` 是否存在。
+- install_engram(name/source) 失败时，不中断用户：自动调用 search_engrams(query) 找候选后重试 install_engram。
+- 用户说“看统计/导出报表” -> 自动调用 stats_engrams(format=plain/json/csv)
+- 用户说“创建 Engram” -> 自动进入创建助手流程（create_engram_assistant + finalize_engram_draft）
+
+## 专家加载与知识读取
+- 用户问题匹配某个专家时，调用 load_engram(name, query)。
+- load_engram 后优先看知识索引/案例索引；索引不足再 read_engram_file(name, "knowledge/xxx.md")。
+- load_engram 返回“继承知识索引”区块时，可 read_engram_file(父专家名, "knowledge/xxx.md") 读取父知识。
+- 在 load_engram 后优先读取案例 frontmatter 的 id/title/uses/tags/updated_at，再决定要不要读具体 knowledge 文件。
+
+## 记忆写入规则
+- 发现跨专家通用信息（年龄、城市、职业、语言偏好等） -> capture_memory(..., is_global=True)
+- 状态性信息（如“用户正在备考”）要加 expires（YYYY-MM-DD），到期自动归档隐藏。
+- load_engram 出现“首次引导”区块时，自然收集并 capture_memory。
+- 发现用户偏好/关键事实/关键决定时，及时 capture_memory(name, content, category, summary, memory_type, tags, conversation_id, expires, is_global)。
+- 记忆条目较多出现“💡 当前共 N 条记忆”时，先 read_engram_file(name, "memory/{category}.md")，再 consolidate_memory(...)。
+- 用户要求删除记忆 -> delete_memory(name, category, summary)
+- 用户纠正记忆 -> correct_memory(name, category, old_summary, new_content, new_summary, memory_type, tags)
+- 记忆较多查历史 -> read_engram_file(name, "memory/_index_full.md")
+
+## 知识写入规则
+- 对话中形成系统性可复用知识（方法论/对比分析/决策框架）时，先询问用户是否写入知识库，确认后 add_knowledge。
+- 用户纠正知识库错误时，提议并执行 add_knowledge 更新。
+- add_knowledge 支持分组路径：filename 可用 "子目录/文件名"（如 "训练基础/深蹲模式"）。
+
+## 创建 Engram 助手（双模式）
+- mode=from_conversation：把当前对话自动整理成 Engram 草稿。
+- mode=guided：一步步引导用户填写；用户说“没有/你来”时自动补全。
+- 统一流程：
+  1) 先调用 create_engram_assistant(...) 生成草稿并回显
+  2) 用户确认后调用 finalize_engram_draft(draft_json, confirm=True)
+  3) finalize 后必须看 lint 结果（errors 必须先修复）
+- 自动生成内容时必须提示：内容可能不完整，建议用户补充。
+- 创建阶段不自动生成用户记忆条目；memory 保持空模板。
+
+## 一致性校验
+- 只要模型新增/修改了 knowledge/examples/index/meta/rules，完成后自动调用 lint_engrams(name)。
+- 解释规则：
+  - error > 0：阻断，先修复再交付。
+  - 仅 warning：可交付，但需向用户说明风险。
+
+## 其他
+- 用户也可以用 @专家名 直接指定专家。
+- 用户询问某个 engram 详细信息时，调用 get_engram_info(name)。
+- 需要直接改 role.md/workflow.md/rules.md 等非知识库文件时，调用 write_engram_file(name, path, content, mode)。
+- 新增/修改案例文件时，确保 frontmatter 字段齐全（id/title/uses/tags/updated_at），id 全局唯一，updated_at 用当天日期。
+- 多案例命中时，先按 tags 匹配，再参考 updated_at 选更近的案例。
+- 回复中引用案例时优先带 title + id，减少歧义。
+- 若发现 frontmatter 缺字段或 uses 指向不存在文件，先修复再继续回答。
 ```
 
 ### Method B: MCP Prompt
@@ -690,7 +911,36 @@ uv cache clean
 
 Then **restart Claude Code** — `uvx` will automatically pull the latest code from GitHub.
 
-> Your Engram data lives in `~/.engram/`, completely separate from the project code. Updating won't affect your existing data.
+> Current behavior: on first run, a project-local `./.claude/engram/` is auto-created (with `starter-complete` and `starter-template`). `~/.engram/` still works as a cross-project shared directory.
+
+## Multi-Device Sync
+
+### Option A: iCloud / Dropbox / OneDrive
+
+Point `--packs-dir` to a synced folder so multiple devices share the same Engram data:
+
+```bash
+claude mcp add --scope user engram-server -- \
+  uvx --from git+https://github.com/DazhuangJammy/Engram engram-server \
+  --packs-dir "$HOME/Library/Mobile Documents/com~apple~CloudDocs/EngramPacks"
+```
+
+> On Windows, switch to a OneDrive path such as `C:\\Users\\<your-user>\\OneDrive\\EngramPacks`.
+
+### Option B: Git Sync (`~/.engram` as a git repo)
+
+If you prefer auditable changes, initialize `~/.engram` as a git repository and push to a private remote:
+
+```bash
+cd ~/.engram
+git init
+git remote add origin <your-private-repo-url>
+git add .
+git commit -m "init engram packs"
+git push -u origin main
+```
+
+On other devices, pull the same repo and keep the same MCP config.
 
 ## Testing
 
@@ -745,10 +995,37 @@ pytest -q
 - `engram-server stats --tui`: Rich-rendered stats dashboard (colored tables + panels)
 - `rich>=13.0` as a required dependency, no impact on one-command install experience
 
+### Completed (v0.9.0)
+
+- `engram-server lint`: Validates index consistency, uses references, meta structure, extends links, empty knowledge files, and required files
+- `engram-server stats --json / --csv`: Machine-readable export formats
+- System prompt and template rules now include proactive knowledge extraction guidance
+
+### Completed (v1.0.0)
+
+- Grouped indexes: `add_knowledge` supports nested paths and updates sub-indexes when available
+- `engram-server init --nested`: Generates templates with nested knowledge indexes
+- Static Registry: added `registry.json`, `engram-server search`, and name-based `install` resolution
+- Added multi-device sync guide in README (cloud folder or Git workflow)
+
+### Completed (v1.1.0)
+
+- Foolproof natural-language routing: users describe intent, model auto-calls MCP tools by default
+- Two-mode creation assistant: `create_engram_assistant` supports `from_conversation` and `guided`
+- Confirm-then-finalize flow: `finalize_engram_draft` materializes files and runs `lint_engrams`
+- Transparent auto-generation notice: drafts mark auto-filled fields and warn that content may be incomplete
+- Creation phase keeps `memory` as an empty template (no user memory is auto-written)
+
+### Completed (v1.2.0)
+
+- Project-level auto bootstrap: first run creates `./.claude/engram/`
+- Two starter packs are injected automatically: `starter-complete` (fully runnable) + `starter-template` (instruction/template)
+- MCP tools (`install_engram` / `init_engram` / `finalize_engram_draft`) now default to writing into the current project directory
+
 ### Planned
 
-- `engram-server lint`: Validate uses paths and index consistency
-- Chaptered knowledge directories: Auto-split large documents into subdirectories + chapter indexes
+- `engram-server lint --fix`: Auto-fix orphan files, invalid index entries, and empty files
+- `search_engram_knowledge(name, query)`: Server-side keyword scan and paragraph retrieval
 - Engram community registry
 
 ## License

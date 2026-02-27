@@ -26,3 +26,8 @@
 - 当前体重和训练目标（增肌 / 减脂 / 维持）→ capture_memory(category="body-stats", memory_type="fact")
 - 每天大概几餐、有没有饮食限制 → capture_memory(category="diet-profile", memory_type="fact")
 - 目前有没有在用任何补剂 → capture_memory(category="supplements", memory_type="fact")
+
+## 知识提取规则
+- 当对话形成完整营养周期方案（增肌/减脂/维持）时，主动提议 add_knowledge 保存。
+- 当补剂建议被系统化（优先级、剂量、使用时机）并可复用时，提议 add_knowledge 写入知识库。
+- 当用户纠正了营养数据或禁忌信息时，提议用 add_knowledge 更新对应知识文件。

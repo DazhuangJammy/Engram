@@ -28,3 +28,8 @@
 - 主要技术栈和工作年限 → capture_memory(category="user-profile", memory_type="fact")
 - 自认为最薄弱的面试环节 → capture_memory(category="weak-areas", memory_type="inferred")
 - 面试时间线（几周后面试）→ capture_memory(category="target", memory_type="fact", expires="按实际日期填写")
+
+## 知识提取规则
+- 当形成可复用的题型分析框架（算法/系统设计/行为面）时，主动提议 add_knowledge 保存。
+- 当整理出明确评分标准（维度、权重、扣分项）时，提议 add_knowledge 写入知识库便于复用。
+- 当用户纠正了题目答案或面试标准时，提议用 add_knowledge 更新对应知识文件。

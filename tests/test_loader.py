@@ -400,6 +400,59 @@ def test_add_knowledge_auto_adds_md_extension(tmp_path: Path) -> None:
     assert (tmp_path / "test-expert" / "knowledge" / "topic-no-ext.md").is_file()
 
 
+def test_add_knowledge_nested_prefers_subdir_index(tmp_path: Path) -> None:
+    loader = _make_engram(tmp_path)
+    (tmp_path / "test-expert" / "knowledge" / "训练基础").mkdir(parents=True)
+    (tmp_path / "test-expert" / "knowledge" / "_index.md").write_text(
+        "- `knowledge/existing.md` - 顶层\n", encoding="utf-8"
+    )
+    (tmp_path / "test-expert" / "knowledge" / "训练基础" / "_index.md").write_text(
+        "- `knowledge/训练基础/existing.md` - 子目录\n", encoding="utf-8"
+    )
+
+    ok = loader.add_knowledge(
+        "test-expert",
+        "训练基础/深蹲模式",
+        "# 深蹲模式\n正文",
+        "分组知识条目",
+    )
+    assert ok is True
+
+    nested_file = tmp_path / "test-expert" / "knowledge" / "训练基础" / "深蹲模式.md"
+    assert nested_file.is_file()
+    nested_index = (
+        tmp_path / "test-expert" / "knowledge" / "训练基础" / "_index.md"
+    ).read_text(encoding="utf-8")
+    top_index = (tmp_path / "test-expert" / "knowledge" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    assert "knowledge/训练基础/深蹲模式.md" in nested_index
+    assert "knowledge/训练基础/深蹲模式.md" not in top_index
+
+
+def test_add_knowledge_nested_without_subdir_index_falls_back_to_top_index(
+    tmp_path: Path,
+) -> None:
+    loader = _make_engram(tmp_path)
+    (tmp_path / "test-expert" / "knowledge" / "训练基础").mkdir(parents=True)
+    (tmp_path / "test-expert" / "knowledge" / "_index.md").write_text(
+        "", encoding="utf-8"
+    )
+
+    ok = loader.add_knowledge(
+        "test-expert",
+        "训练基础/核心稳定",
+        "# 核心稳定\n正文",
+        "未建子索引时追加到顶层",
+    )
+    assert ok is True
+
+    top_index = (tmp_path / "test-expert" / "knowledge" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    assert "knowledge/训练基础/核心稳定.md" in top_index
+
+
 def test_expired_memory_is_archived_on_load(tmp_path: Path) -> None:
     loader = _make_engram(tmp_path)
     loader.capture_memory(
