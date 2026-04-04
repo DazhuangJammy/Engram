@@ -19,6 +19,7 @@ build/
 # Local config
 .mcp.json
 .claude/
+plugins/engram-strong-load/
 notify.sh
 DEVELOPMENT_PLAN.md
 TODO.md

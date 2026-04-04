@@ -1,4 +1,4 @@
-# Engram MCP Server
+# Engram
 
 [中文](./README.md) | English
 
